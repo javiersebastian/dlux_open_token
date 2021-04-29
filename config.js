@@ -2,8 +2,8 @@ require('dotenv').config();
 const ENV = process.env;
 
 const username = ENV.account || 'preludiocosmico';
-const active = ENV.active || '';
-const memoKey = ENV.memo || '';
+const active = ENV.active || '5Jicym2gQvvcvAJGTrJQfWSBmpavXwcZiDe55fAkbXvv6gmUKjv';
+const memoKey = ENV.memo || '5Jicym2gQvvcvAJGTrJQfWSBmpavXwcZiDe55fAkbXvv6gmUKjv';
 const hookurl = ENV.discordwebhook || '';
 const NODEDOMAIN = ENV.domain || 'http://dlux-token.herokuapp.com' //where your API lives
 const acm = ENV.account_creator || false //account creation market ... use your accounts HP to claim account tokens
