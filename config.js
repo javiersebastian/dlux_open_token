@@ -1,11 +1,11 @@
 require('dotenv').config();
 const ENV = process.env;
 
-const username = ENV.account || 'preludiocosmico';
-const active = ENV.active || '5Jicym2gQvvcvAJGTrJQfWSBmpavXwcZiDe55fAkbXvv6gmUKjv';
-const memoKey = ENV.memo || '5Jicym2gQvvcvAJGTrJQfWSBmpavXwcZiDe55fAkbXvv6gmUKjv';
+const username = ENV.account || 'disregardfiat';
+const active = ENV.active || '';
+const memoKey = ENV.memo || '';
 const hookurl = ENV.discordwebhook || '';
-const NODEDOMAIN = ENV.domain || 'https://dlux-token-preludiocosmico.herokuapp.com/' //where your API lives
+const NODEDOMAIN = ENV.domain || 'http://dlux-token.herokuapp.com' //where your API lives
 const acm = ENV.account_creator || false //account creation market ... use your accounts HP to claim account tokens
 const mirror = ENV.mirror || false //makes identical posts, votes and IPFS pins as the leader account
 const port = ENV.PORT || 3000;
