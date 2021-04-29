@@ -1,7 +1,7 @@
 require('dotenv').config();
 const ENV = process.env;
 
-const username = ENV.account || 'disregardfiat';
+const username = ENV.account || 'preludiocosmico';
 const active = ENV.active || '';
 const memoKey = ENV.memo || '';
 const hookurl = ENV.discordwebhook || '';
