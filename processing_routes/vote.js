@@ -5,7 +5,7 @@ const { getPathObj } = require('./../getPathObj')
 const { deleteObjs } = require('./../deleteObjs');
 
 exports.vote = (json, pc) => {
-    if (json.voter = config.leader) {
+    if (json.voter == config.leader) {
         deleteObjs([
                 ['escrow', config.leader, `vote:${json.author}/${json.permlink}`]
             ])

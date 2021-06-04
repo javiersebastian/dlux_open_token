@@ -1,5 +1,6 @@
+const {ad} = require('./airdrop');
 const config = require('./config');
-const VERSION = 'v1.0.0a1'
+const VERSION = 'v1.0.0b2'
 exports.VERSION = VERSION
 
 const hive = require('@hiveio/dhive');
@@ -68,7 +69,7 @@ var recents = []
     //HIVE API CODE
 
 //Start Program Options   
-//startWith('QmPgZNQcJgtFNMMduLF1buk6mDbLYWHMk65Zj95mhdwuD5') //for testing and replaying
+//startWith('QmYDfbRfJ7yB457rTDPHtsXaooKfa7k3RnjNK187WF17XZ') //for testing and replaying
 dynStart(config.leader)
 
 // API defs
@@ -528,6 +529,7 @@ function startWith(hash) {
                         if (!e) {
                             if (hash) {
                                 var cleanState = data[1]
+                                //cleanState = airdrop(cleanState, ad, 'rm')
                                 store.put([], cleanState, function(err) {
                                     if (err) {
                                         console.log(err)
@@ -620,3 +622,27 @@ function startWith(hash) {
         })
     }
 }
+
+function airdrop(state, aird, source) {
+                                    var src = source || 'rm'
+                                    for (a in aird){
+                                        let drop = 5000 * aird[a].length
+                                        if(drop){
+                                                state.balances[a] += drop
+                                                if(!state.balances[a]){
+                                                    state.balances[a] = drop
+                                                }
+                                                console.log(a,state.balances[a])
+                                                state.balances[src] -= drop
+                                            }
+                                        for(i=0;i<aird[a].length;i++){
+                                            state.balances[aird[a][i]] += 5000
+                                                if(!state.balances[aird[a][i]]){
+                                                    state.balances[aird[a][i]] = 5000
+                                                }
+                                                console.log(aird[a][i],state.balances[aird[a][i]])
+                                                state.balances[src] -= 5000
+                                        }
+                                    }
+                                    return state
+                                }
