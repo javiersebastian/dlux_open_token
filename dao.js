@@ -59,14 +59,17 @@ function dao(num) {
                                 feedCleaner = v[12],
                                 paidCleaner = v[12]
                             feedKeys = Object.keys(feedCleaner);
+                            paidKeys = Object.keys(paidCleaner);
                             for (feedi = 0; feedi < feedKeys.length; feedi++) {
                                 if (feedKeys[feedi].split(':')[0] < num - 30240) {
                                     daops.push({ type: 'del', path: ['feed', feedKeys[feedi]] });
                                 }
                             }
-                            for (paid in paidCleaner) {
-                                if (paid < num - 30240) {
-                                    daops.push({ type: 'del', path: ['paid', paid] });
+                            for (paidi = 0; paidi < paidKeys.length; paidi++) {
+                                console.log(paidKeys[paidi])
+                                if (parseInt(paidKeys[paidi]) < num - 30240) {
+                                    console.log(paidKeys[paidi])
+                                    daops.push({ type: 'del', path: ['paid', paidKeys[paidi]] });
                                 }
                             }
                             news = news;
@@ -357,7 +360,7 @@ function dao(num) {
                 cpost[`s/${vo[oo].author}/${vo[oo].permlink}`].b = weight;
                 hiveVotes = hiveVotes + `* [${vo[oo].title || `${config.TOKEN} Content`}](https://www.${config.mainFE}/@${vo[oo].author}/${vo[oo].permlink}) by @${vo[oo].author} | ${parseFloat(weight / 100).toFixed(2)}% \n`;
             }
-            const footer = `[Visit ${config.mainFE}](https://www.${config.mainFE})\n[Find us on Discord](https://discord.gg/Beeb38j)\n[Visit our DEX/Wallet](https://www.${config.mainFE}/dex)\n[Learn how to use ${config.TOKEN}](https://github.com/dluxio/dluxio/wiki)\n*Price for 25.2 Hrs from posting or until daily 100,000.000 ${config.TOKEN} sold.`;
+            const footer = `[Visit ${config.mainFE}](https://www.${config.mainFE})\n[Visit our DEX/Wallet](https://www.${config.mainFE}/dex)\n[Learn how to use ${config.TOKEN}](https://github.com/dluxio/dluxio/wiki)\n[Stop @ Mentions - HiveSigner](https://hivesigner.com/sign/custom-json?authority=posting&required_auths=0&id=${config.prefix}nomention&json=%7B%22nomention%22%3Atrue%7D)\n${config.footer}`;
             if (hiveVotes)
                 hiveVotes = `#### Community Voted ${config.TOKEN} Posts\n` + hiveVotes + `*****\n`;
             post = header + contentRewards + hiveVotes + post + footer;

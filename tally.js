@@ -3,6 +3,7 @@ const { getPathNum } = require("./getPathNum");
 const { getPathObj } = require("./getPathObj");
 const { deleteObjs } = require('./deleteObjs')
 const { store, exit } = require("./index");
+const { updatePost } = require('./edb');
 
 //determine consensus... needs some work with memory management
 exports.tally = (num, plasma, isStreaming) => {
@@ -119,9 +120,13 @@ exports.tally = (num, plasma, isStreaming) => {
                                     winner.t = election[node].t
                                 }
                             }
-                            if (winner.node && (winner.t > ((low_sum - last_bal) / (Object.keys(still_running).length / 2)) || Object.keys(still_running).length < 9)) { //simple test to see if the election will benifit the runners collateral totals
+                            //console.log({counting_array, low_sum, last_bal, still_running})
+                            stats.gov_threshhold = parseInt((low_sum - last_bal) / (Object.keys(still_running).length / 2)) 
+                            if (winner.node && (winner.t > stats.gov_threshhold || Object.keys(still_running).length < 9)) { //simple test to see if the election will benifit the runners collateral totals
                                 still_running[winner.node] = new_queue[winner.node]
                             }
+                        } else {
+                            stats.gov_threshhold = "FULL"
                         }
                         let collateral = []
                         for (node in still_running) {
@@ -160,10 +165,15 @@ exports.tally = (num, plasma, isStreaming) => {
                         still_running,
                         stats
                     };
-                    let weights = 0,
-                        running_weight = parseInt(stats.movingWeight.running / 2016) + 1
+                    
+                    let weights = 0
                     for (post in pending) {
                         weights += pending[post].t.totalWeight
+                    }
+                    let inflation_floor = parseInt((stats.movingWeight.running + (weights/140)) / 2016) //minimum payout in time period
+                        running_weight = parseInt(stats.movingWeight.running / 2016)
+                    if (running_weight < inflation_floor){
+                        running_weight = inflation_floor
                     }
                     if (num < 50700000) {
                         stats.movingWeight.dailyPool = 700000
@@ -239,6 +249,11 @@ function payout(this_payout, weights, pending, num) {
             if (p.length) {
                 let i = 0,
                     ops = [{ type: 'put', path: ['paid', num.toString()], data: pending }]
+                    if(config.dbcs){
+                        for (i in pending){
+                            updatePost(pending[i])
+                        }
+                    }
                 for (account in payments) {
                     ops.push({ type: 'put', path: ['balances', account], data: p[i] + payments[account] })
                     i++

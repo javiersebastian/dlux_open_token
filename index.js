@@ -1,4 +1,3 @@
-const {ad} = require('./airdrop');
 const config = require('./config');
 const VERSION = 'v1.0.0b2'
 exports.VERSION = VERSION
@@ -30,6 +29,7 @@ const op = ChainTypes.operations
 const walletOperationsBitmask = makeBitMaskFilter([op.custom_json])
 const hiveClient = require('@hiveio/hive-js');
 hiveClient.api.setOptions({ url: config.clientURL });
+console.log('Using APIURL: ', config.clientURL)
 exports.hiveClient = hiveClient
 
 var NodeOps = [];
@@ -50,7 +50,7 @@ const { report } = require("./report");
 const { ipfsSaveState } = require("./ipfsSaveState");
 const { waitup } = require("./waitup");
 const { dao } = require("./dao");
-const { release } = require('./lil_ops')
+const { release, recast } = require('./lil_ops')
 const hiveState = require('./processor');
 const api = express()
 var http = require('http').Server(api);
@@ -60,7 +60,7 @@ exports.escrow = escrow;
 var startingBlock = config.starting_block
     //var current
     //exports.current = current
-const streamMode = args.mode || 'irreversible'; //latest is probably good enough
+const streamMode = args.mode || 'irreversible';
 console.log("Streaming using mode", streamMode);
 var processor;
 var live_dex = {}, //for feedback, unused currently
@@ -69,8 +69,9 @@ var recents = []
     //HIVE API CODE
 
 //Start Program Options   
-//startWith('QmYDfbRfJ7yB457rTDPHtsXaooKfa7k3RnjNK187WF17XZ') //for testing and replaying
+//startWith('QmW7Sfv5QZKtDL4Cc6br973HEHmscFunNGcKY7aS5t3HS7') //for testing and replaying
 dynStart(config.leader)
+
 
 // API defs
 api.use(API.https_redirect);
@@ -82,6 +83,11 @@ api.get('/state', API.state); //Do not recommend having a state dump in a produc
 api.get('/dex', API.dex);
 api.get('/@:un', API.user);
 api.get('/blog/@:un', API.blog);
+api.get('/dapps/@:author', API.getAuthorPosts);
+api.get('/dapps/@:author/:permlink', API.getPost);
+api.get('/new', API.getNewPosts);
+api.get('/trending', API.getTrendingPosts);
+api.get('/promoted', API.getPromotedPosts);
 api.get('/report/:un', API.report); // probably not needed
 api.get('/markets', API.markets); //for finding node runner and tasks information
 api.get('/posts/:author/:permlink', API.PostAuthorPermlink);
@@ -170,8 +176,14 @@ function startApp() {
                     for (var i in chrops) {
                         let delKey = chrops[i]
                         store.get(['chrono', chrops[i]], function(e, b) {
-                            console.log(b)
                             switch (b.op) {
+                                case 'del_pend':
+                                    store.batch([{ type: 'del', path: ['chrono', delKey] }, { type: 'del', path: ['pend', `${b.author}/${b.permlink}`]}], [function() {}, function() { console.log('failure') }])
+                                    break;
+                                case 'ms_send':
+                                    promises.push(recast(b.attempts, b.txid, num))
+                                    store.batch([{ type: 'del', path: ['chrono', delKey] }], [function() {}, function() { console.log('failure') }])
+                                    break;
                                 case 'expire':
                                     promises.push(release(b.from, b.txid, num))
                                     store.batch([{ type: 'del', path: ['chrono', delKey] }], [function() {}, function() { console.log('failure') }])
@@ -259,7 +271,7 @@ function startApp() {
                                                 }
                                                 for (vote in b.votes) {
                                                     totals.totalWeight += b.votes[vote].v
-                                                    linearWeight = parseInt(b.votes[vote].v * ((201600 - (b.votes[vote].b + b.block)) / 201600))
+                                                    linearWeight = parseInt(b.votes[vote].v * ((201600 - (b.votes[vote].b - b.block)) / 201600))
                                                     totals.linearWeight += linearWeight
                                                     b.votes[vote].w = linearWeight
                                                 }
@@ -275,7 +287,6 @@ function startApp() {
                                                 ops.push({ type: 'del', path: ['chrono', delkey] })
                                                 ops.push({ type: 'put', path: ['feed', `${num}:vop_${id}`], data: `@${b.author}| Post:${b.permlink} voting expired.` })
                                                 ops.push({ type: 'del', path: ['posts', `${b.author}/${b.permlink}`] })
-                                                console.log(ops)
                                                 store.batch(ops, [resolve, reject])
                                             })
                                         })
@@ -297,7 +308,7 @@ function startApp() {
                                                 if (b.v > 0) {
                                                     ops.push({
                                                         type: 'put',
-                                                        path: ['pendingvote', `${b.author}/${b.permlink}`],
+                                                        path: ['pendingvote', `${l.author}/${l.permlink}`],
                                                         data: b
                                                     })
                                                 }
@@ -324,6 +335,7 @@ function startApp() {
                         //check(num) //not promised, read only
                     }
                     if (num % 100 === 50 && processor.isStreaming()) {
+                        plasma.bh = processor.getBlockHeader()
                         report(plasma)
                             .then(nodeOp => {
                                 console.log(nodeOp)
@@ -435,13 +447,13 @@ function startApp() {
 
 function exit(consensus) {
     console.log(`Restarting with ${consensus}...`);
-    processor.stop(function() {
+    processor.stop(function() {});
+    console.log('scope check2') //this fails so ... trouble shoot
         if (consensus) {
             startWith(consensus)
         } else {
             dynStart(config.leader)
         }
-    });
 }
 
 function waitfor(promises_array) {
@@ -474,6 +486,7 @@ function cycleAPI() {
         c = -1
     }
     config.clientURL = config.clients[c + 1]
+    console.log('Using APIURL: ', config.clientURL)
     client = new hive.Client(config.clientURL)
     exit(plasma.hashLastIBlock)
 }
@@ -529,7 +542,6 @@ function startWith(hash) {
                         if (!e) {
                             if (hash) {
                                 var cleanState = data[1]
-                                //cleanState = airdrop(cleanState, ad, 'rm')
                                 store.put([], cleanState, function(err) {
                                     if (err) {
                                         console.log(err)
@@ -622,27 +634,3 @@ function startWith(hash) {
         })
     }
 }
-
-function airdrop(state, aird, source) {
-                                    var src = source || 'rm'
-                                    for (a in aird){
-                                        let drop = 5000 * aird[a].length
-                                        if(drop){
-                                                state.balances[a] += drop
-                                                if(!state.balances[a]){
-                                                    state.balances[a] = drop
-                                                }
-                                                console.log(a,state.balances[a])
-                                                state.balances[src] -= drop
-                                            }
-                                        for(i=0;i<aird[a].length;i++){
-                                            state.balances[aird[a][i]] += 5000
-                                                if(!state.balances[aird[a][i]]){
-                                                    state.balances[aird[a][i]] = 5000
-                                                }
-                                                console.log(aird[a][i],state.balances[aird[a][i]])
-                                                state.balances[src] -= 5000
-                                        }
-                                    }
-                                    return state
-                                }

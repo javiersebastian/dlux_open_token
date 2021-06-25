@@ -1,18 +1,19 @@
 const config = require('./../config')
-const rtrades = require('./../rtrades')
+//const rtrades = require('./../rtrades')
 const { store, unshiftOp } = require('./../index')
-const { deleteObjs } = require('./../deleteObjs')
+//const { deleteObjs } = require('./../deleteObjs')
 const { chronAssign } = require('./../lil_ops')
 const { getPathObj } = require('../getPathObj')
 var request = require('request');
-const { postToDiscord, contentToDiscord } = require('./../discord')
+const { contentToDiscord } = require('./../discord')
+const { insertNewPost } = require('./../edb');
 
 exports.comment = (json, pc) => {
     let meta = {}
     try { meta = JSON.parse(json.json_metadata) } catch (e) {}
     let community_post = false
     if (json.author == config.leader && parseInt(json.permlink.split('dlux')[1]) > json.block_num - 31000) {
-        console.log('leader post')
+        //console.log('leader post')
         store.get(['escrow', json.author], function(e, a) {
             if (!e) {
                 var ops = []
@@ -28,7 +29,7 @@ exports.comment = (json, pc) => {
             }
         })
     } else if (meta.arHash || meta.vrHash || meta.appHash || meta.audHash) {
-        Ppost = getPathObj(['post', `${json.author}/${json.permlink}`])
+        Ppost = getPathObj(['posts', `${json.author}/${json.permlink}`])
         Promise.all([Ppost])
             .then(postarray => {
                 post = postarray[0]
@@ -106,6 +107,7 @@ exports.comment = (json, pc) => {
 }
 
 exports.comment_options = (json, pc) => {
+    //console.log(json)
     try {
         var filter = json.extensions[0][1].beneficiaries
     } catch (e) {
@@ -118,12 +120,19 @@ exports.comment_options = (json, pc) => {
             store.get(['pend', `${json.author}/${json.permlink}`], function(e, a) {
                 if (e) { console.log(e) }
                 if (Object.keys(a).length) {
-                    chronAssign(json.block_num + 201600, {
+                    var assigns = []
+                    assigns.push(chronAssign(json.block_num + 201600, {
                         block: parseInt(json.block_num + 201600),
                         op: 'post_reward',
                         author: json.author,
                         permlink: json.permlink
-                    })
+                    }))
+                    assigns.push(chronAssign(parseInt(json.block_num + 20000), {
+                        block: parseInt(json.block_num + 20000),
+                        op: 'post_vote',
+                        author: json.author,
+                        permlink: json.permlink
+                    }))
                     ops.push({
                         type: 'put',
                         path: ['posts', `${json.author}/${json.permlink}`],
@@ -134,6 +143,13 @@ exports.comment_options = (json, pc) => {
                             customJSON: a.meta
                         }
                     })
+                    if(config.dbcs){
+                                insertNewPost({
+                            block: json.block_num,
+                            author: json.author,
+                            permlink: json.permlink
+                        })
+                            }
                     if (config.pintoken) {
                         var pins = []
                         for (i in a.meta.assets) {
@@ -186,7 +202,10 @@ exports.comment_options = (json, pc) => {
                     if (config.hookurl) contentToDiscord(json.author, json.permlink)
                     ops.push({ type: 'put', path: ['feed', `${json.block_num}:${json.transaction_id}`], data: msg })
                     if (process.env.npm_lifecycle_event == 'test') pc[2] = ops
-                    store.batch(ops, pc)
+                    Promise.all(assigns)
+                    .then(v=>{
+                        store.batch(ops, pc)
+                    })
                 } else {
                     ops.push({ type: 'del', path: ['pend', `${json.author}/${json.permlink}`] })
                     ops.push({ type: 'del', path: ['chrono', `${a.block_num + 28800}:pend:${json.author}/${json.permlink}`] })
