@@ -72,7 +72,7 @@ var recents = []
     //HIVE API CODE
 
 //Start Program Options   
-//startWith('QmWCeBSjzeBC8Q9dDhF7ZcHxozgkv9d6XdwSMT7pVwytr5') //for testing and replaying
+//startWith('QmUvtACfkn5JeVxDe35YxzeYm1p4DgVoNAnLaSjL4SAXnh') //for testing and replaying
 dynStart(config.leader)
 
 
@@ -297,7 +297,7 @@ function startApp() {
                                                 })
                                                 ops.push({ type: 'del', path: ['chrono', delkey] })
                                                 ops.push({ type: 'put', path: ['feed', `${num}:vop_${id}`], data: `@${b.author}| Post:${b.permlink} voting expired.` })
-                                                ops.push({ type: 'del', path: ['posts', `${b.author}/${b.permlink}`] })
+                                                ops.push({ type: 'del', path: ['post', `${b.author}/${b.permlink}`] })
                                                 store.batch(ops, [resolve, reject])
                                             })
                                         })
@@ -570,6 +570,9 @@ function startWith(hash) {
                         if (!e) {
                             if (hash) {
                                 var cleanState = data[1]
+                                //stuff to make MS work
+                                cleanState.stats.MSHeld = 0
+                                cleanState.stats.max_transfer = 20
                                 store.put([], cleanState, function(err) {
                                     if (err) {
                                         console.log(err)
