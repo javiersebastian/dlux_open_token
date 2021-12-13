@@ -8,7 +8,7 @@ module.exports = function(client, steem, currentBlockNumber = 1, blockComputeSpe
     var onStreamingStart = function() {};
 
     var isStreaming;
-    var block_header;
+    var block_header = {};
     var stream;
 
     var stopping = false;
@@ -37,7 +37,11 @@ module.exports = function(client, steem, currentBlockNumber = 1, blockComputeSpe
             })
             .then(res => res.json())
             .then(json => {
-                resolve(json.result)
+                if (!json.result) {
+                    resolve([])
+                } else {
+                    resolve(json.result)
+                }
             })
             .catch(err => {reject(err)})
         });
@@ -59,15 +63,26 @@ module.exports = function(client, steem, currentBlockNumber = 1, blockComputeSpe
             var blockNum = currentBlockNumber; // Helper variable to prevent race condition
             // in getBlock()
             var vops = getVops(blockNum)
-            client.database.getBlock(blockNum)
-                .then((result) => {
-                    /*
-                    block_header = {
-                        timestamp: result.timestamp,
-                        block_id: result.block_id,
-                        block_number: blockNum
+            function getBlock(bn){
+                return new Promise ((resolve, reject)=>{
+                    gb(bn, 0)
+                    function gb (bln, at){
+                        client.database.getBlock(bln)
+                    .then((result) => {
+                        resolve(result)
+                    })
+                    .catch((err) => {
+                        if (at < 3){
+                                gb(bn, at+1)
+                        } else {
+                            reject(err)
+                        }
+                    })
                     }
-                    */
+                })
+            }
+            getBlock(blockNum)
+                .then((result) => {
                     processBlock(result, blockNum, vops)
                         .then(r => {
                             currentBlockNumber++;
@@ -82,6 +97,7 @@ module.exports = function(client, steem, currentBlockNumber = 1, blockComputeSpe
                             } else {
                                 console.log('failed at stopping')
                                 setTimeout(stopCallback, 1000);
+                                cycleapi()
                             }
                         })
                         .catch(e => { console.log('failed at catch:', e) })
@@ -137,6 +153,7 @@ module.exports = function(client, steem, currentBlockNumber = 1, blockComputeSpe
                                     if(onOperation[vo[j].op[0]] !== undefined){
                                     var json = vo[j].op[1]
                                     json.block_num = vo[j].block
+                                    //json.timestamp = vo[j].timestamp
                                     json.txid = vo[j].trx_id
                                     Vops.push([vo[j].op[0],json])
                                     }
@@ -144,15 +161,24 @@ module.exports = function(client, steem, currentBlockNumber = 1, blockComputeSpe
                                 if(Vops.length){
                                     transactional(Vops, 0, v[2], v[3], v[4])
                                 } else {
-                                    onNewBlock(num, v)
+                                    onNewBlock(num, v, v[4].witness_signature, {
+                                                                                timestamp: v[4].timestamp,
+                                                                                block_id: v[4].block_id,
+                                                                                block_number: num
+                                                                            })
                                         .then(r => {
                                             pc[0](pc[2])
                                         })
                                         .catch(e => { console.log(e) })
                                 }
                             })
+                            .catch(e=>{console.log(e);cycleapi()})
                         } else {
-                            onNewBlock(num, v)
+                            onNewBlock(num, v, v[4].witness_signature, {
+                                                                        timestamp: v[4].timestamp,
+                                                                        block_id: v[4].block_id,
+                                                                        block_number: num
+                                                                    })
                             .then(r => {
                                 pc[0](pc[2])
                             })
@@ -165,7 +191,11 @@ module.exports = function(client, steem, currentBlockNumber = 1, blockComputeSpe
                     pc[1](e)
                 })
         } else {
-            onNewBlock(num, pc)
+            onNewBlock(num, pc, block.witness_signature,  {
+                                                            timestamp: block.timestamp,
+                                                            block_id: block.block_id,
+                                                            block_number: num
+                                                        })
                 .then(r => {
                     r[0]()
                 })
@@ -264,11 +294,6 @@ module.exports = function(client, steem, currentBlockNumber = 1, blockComputeSpe
         isStreaming: function() {
             return isStreaming;
         },
-
-        getBlockHeader: function() {
-            return block_header;
-        },
-
         onStreamingStart: function(callback) {
             onStreamingStart = callback;
         },

@@ -1,10 +1,10 @@
 const config = require('./../config')
 const { store } = require("./../index");
 const hive = require('@hiveio/hive-js');
-const { getPathObj } = require("./../getPathObj");
+const { getPathObj, deleteObjs } = require("./../getPathObj");
 const { postToDiscord } = require('./../discord')
-const { deleteObjs } = require('./../deleteObjs')
 const { chronAssign } = require('./../lil_ops')
+const { verify_broadcast } = require('./../tally')
 
 exports.account_update = (json, pc) => {
     Pnode = getPathObj(['makerts', 'node', json.account])
@@ -34,28 +34,30 @@ exports.account_update = (json, pc) => {
 }
 
 exports.sig_submit = (json, from, active, pc) => {
-    var Pop = getPathObj(['ms', 'ops', json.op]),
+    var Pop = getPathObj(['mss', `${json.sig_block}`]),
+        Psigs = getPathObj(['mss', `${json.sig_block}:sigs`]),
         Pstats = getPathObj(['stats'])
-    Promise.all([Pop, Pstats])
+    Promise.all([Pop, Pstats, Psigs])
         .then(got => {
             let msop = got[0],
                 stats = got[1],
+                sigs = got[2]
                 ops = []
-                //verify sig
-            if (active && Object.keys(msop).length && stats.ms_auths[from]) {
-                let next = 0
-                for (sig in msop.pend) {
-                    if (parseInt(sig) > next)
-                        next = parseInt(sig)
+                try{
+                    msop = JSON.parse(msop)
+                } catch (e){}
+            if (active && stats.ms.active_account_auths[from] && msop.expiration) {
+                sigs[from] = json.sig
+                if(Object.keys(sigs).length >= stats.ms.active_threshold){
+                    let sigarr = []
+                    for(var i in sigs){
+                        sigarr.push(sigs[i])
+                    }
+                    verify_broadcast(msop, sigarr, stats.ms.active_threshold)
                 }
-                next++
-                msop.pend[next.toString()] = {
-                    sig: json.sig,
-                    by: from
-                }
-
-                ops.push({ type: 'put', path: ['ms', 'ops', json.op], data: msop })
+                ops.push({ type: 'put', path: ['mss', `${json.sig_block}:sigs`], data: sigs })
                 store.batch(ops, pc);
+                //try to sign
             } else {
                 pc[0](pc[2])
             }

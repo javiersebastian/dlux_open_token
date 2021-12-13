@@ -1,6 +1,5 @@
 const config = require('./config');
-const { getPathNum } = require("./getPathNum");
-const { getPathObj } = require("./getPathObj");
+const { getPathObj, getPathNum } = require("./getPathObj");
 const { store } = require("./index");
 const { isEmpty } = require('./lil_ops')
 const { sortBuyArray } = require('./helpers')
@@ -37,8 +36,9 @@ function dao(num) {
                     Pnomen = getPathObj(['nomention']),
                     Pposts = getPathObj(['posts']),
                     Pfeed = getPathObj(['feed']),
-                    Ppaid = getPathObj(['paid']);
-                Promise.all([Pnews, Pbals, Prunners, Pnodes, Pstats, Pdelegations, Pico, Pdex, Pbr, Ppbal, Pnomen, Pposts, Pfeed, Ppaid]).then(function(v) {
+                    Ppaid = getPathObj(['paid']),
+                    Prnfts = getPathObj(['rnfts']);
+                Promise.all([Pnews, Pbals, Prunners, Pnodes, Pstats, Pdelegations, Pico, Pdex, Pbr, Ppbal, Pnomen, Pposts, Pfeed, Ppaid, Prnfts]).then(function(v) {
                             daops.push({ type: 'del', path: ['postQueue'] });
                             daops.push({ type: 'del', path: ['br'] });
                             daops.push({ type: 'del', path: ['rolling'] });
@@ -57,9 +57,18 @@ function dao(num) {
                                 nomention = v[10],
                                 cpost = v[11],
                                 feedCleaner = v[12],
-                                paidCleaner = v[12]
+                                paidCleaner = v[13],
+                                rnftsCleaner = v[14];
                             feedKeys = Object.keys(feedCleaner);
                             paidKeys = Object.keys(paidCleaner);
+                            for(var set in rnftsCleaner){
+                                rnftKeys = Object.keys(rnftsCleaner[set]);
+                                for (var rnfti = 0; rnfti < rnftKeys.length; rnfti++) {
+                                    if (rnftsCleaner[set][rnftKeys[rnfti]] == 0) {
+                                        daops.push({ type: 'del', path: ['rnfts', set, rnftKeys[rnfti]] });
+                                    }
+                                }
+                            }
                             for (feedi = 0; feedi < feedKeys.length; feedi++) {
                                 if (feedKeys[feedi].split(':')[0] < num - 30240) {
                                     daops.push({ type: 'del', path: ['feed', feedKeys[feedi]] });
@@ -92,9 +101,9 @@ function dao(num) {
                             stats.marketingRate = parseInt(b / i);
                             stats.nodeRate = parseInt(j / i);
                             post = `![${config.TOKEN} Advert](https://camo.githubusercontent.com/954558e3ca2d68e0034cae13663d9807dcce3fcf/68747470733a2f2f697066732e627573792e6f72672f697066732f516d64354b78395548366a666e5a6748724a583339744172474e6b514253376359465032357a3467467132576f50)\n#### Daily Accounting\n`;
-                            post = post + `Total Supply: ${parseFloat(parseInt(stats.tokenSupply) / 1000).toFixed(3)} ${config.TOKEN}\n* ${parseFloat(parseInt(stats.tokenSupply - powBal - (bals.ra + bals.rb + bals.rc + bals.rd + bals.re + bals.ri + bals.rr + bals.rn + bals.rm)) / 1000).toFixed(3)} ${config.TOKEN} liquid\n`;
+                            post = post + `Total Supply: ${parseFloat(parseInt(stats.tokenSupply) / 1000).toFixed(3)} ${config.TOKEN}\n* ${parseFloat(parseInt(stats.tokenSupply - powBal - (bals.ra + bals.rc + bals.rd + bals.ri + bals.rn + bals.rm)) / 1000).toFixed(3)} ${config.TOKEN} liquid\n`;
                             post = post + `* ${parseFloat(parseInt(powBal) / 1000).toFixed(3)} ${config.TOKEN} Powered up for Voting\n`;
-                            post = post + `* ${parseFloat(parseInt(bals.ra + bals.rb + bals.rc + bals.rd + bals.re + bals.ri + bals.rr + bals.rn + bals.rm) / 1000).toFixed(3)} ${config.TOKEN} in distribution accounts\n`;
+                            post = post + `* ${parseFloat(parseInt(bals.ra + bals.rc + bals.rd + bals.ri + bals.rn + bals.rm) / 1000).toFixed(3)} ${config.TOKEN} in distribution accounts\n`;
                             post = post + `${parseFloat(parseInt(t) / 1000).toFixed(3)} ${config.TOKEN} has been generated today. 5% APY.\n${parseFloat(stats.marketingRate / 10000).toFixed(4)} is the marketing rate.\n${parseFloat(stats.nodeRate / 10000).toFixed(4)} is the node rate.\n`;
                             console.log(`DAO Accounting In Progress:\n${t} has been generated today\n${stats.marketingRate} is the marketing rate.\n${stats.nodeRate} is the node rate.`);
                             bals.rn += parseInt(t * parseInt(stats.nodeRate) / 10000);
@@ -107,7 +116,7 @@ function dao(num) {
                                 bals.rm = 1000000000;
                             }
                             bals.ra = parseInt(bals.ra) - parseInt(t * stats.marketingRate / 10000);
-
+                            
                             i = 0, j = 0;
                             post = post + `${parseFloat(parseInt(bals.rm) / 1000).toFixed(3)} ${config.TOKEN} is in the Marketing Allocation.\n##### Node Rewards for Elected Reports and Escrow Transfers\n`;
                             console.log(num + `:${bals.rm} is availible in the marketing account\n${bals.rn} ${config.TOKEN} set asside to distribute to nodes`);
@@ -123,20 +132,22 @@ function dao(num) {
                                     return '@';
                                 }
                             }
-                            for (var node in mnode) { //and pay them
-                                i = parseInt(mnode[node].wins / j * b);
-                                if (bals[node]) {
-                                    bals[node] += i;
-                                } else {
-                                    bals[node] = i;
+                            if(j){
+                                for (var node in mnode) { //and pay them
+                                    i = parseInt(mnode[node].wins / j * b);
+                                    if (bals[node]) {
+                                        bals[node] += i;
+                                    } else {
+                                        bals[node] = i;
+                                    }
+                                    bals.rn -= i;
+                                    const _at = _atfun(node);
+                                    if (i) {
+                                        post = post + `* ${_at}${node} awarded ${parseFloat(i / 1000).toFixed(3)} ${config.TOKEN} for ${mnode[node].wins} credited transaction(s)\n`;
+                                        console.log(num + `:@${node} awarded ${parseFloat(i / 1000).toFixed(3)} ${config.TOKEN} for ${mnode[node].wins} credited transaction(s)`);
+                                    }
+                                    mnode[node].wins = 0;
                                 }
-                                bals.rn -= i;
-                                const _at = _atfun(node);
-                                if (i) {
-                                    post = post + `* ${_at}${node} awarded ${parseFloat(i / 1000).toFixed(3)} ${config.TOKEN} for ${mnode[node].wins} credited transaction(s)\n`;
-                                    console.log(num + `:@${node} awarded ${parseFloat(i / 1000).toFixed(3)} ${config.TOKEN} for ${mnode[node].wins} credited transaction(s)`);
-                                }
-                                mnode[node].wins = 0;
                             }
                             bals.rd += parseInt(t * stats.delegationRate / 10000); // 10% to delegators
                             post = post + `### ${parseFloat(parseInt(bals.rd) / 1000).toFixed(3)} ${config.TOKEN} set aside for @${config.delegation} delegators\n`;
@@ -237,8 +248,8 @@ function dao(num) {
                                     his.push(dex.hive.his[int]);
                                     daops.push({ type: 'del', path: ['dex', 'hive', 'his', int] });
                                 } else {
-                                    vol = parseInt(parseInt(dex.hive.his[int].amount) + vol);
-                                    vols = parseInt(parseInt(parseInt(dex.hive.his[int].amount) * parseFloat(dex.hive.his[int].rate)) + vols);
+                                    vol = parseInt(parseInt(dex.hive.his[int].base_vol) + vol);
+                                    vols = parseInt(parseInt(dex.hive.his[int].target_vol) + vols);
                                 }
                             }
                             for (var int in dex.hbd.his) {
@@ -247,7 +258,7 @@ function dao(num) {
                                     daops.push({ type: 'del', path: ['dex', 'hbd', 'his', int] });
                                 } else {
                                     vol = parseInt(parseInt(dex.hbd.his[int].amount) + vol);
-                                    volhbd = parseInt(parseInt(parseInt(dex.hbd.his[int].amount) * parseFloat(dex.hbd.his[int].rate)) + volhbd);
+                                    volhbd = parseInt(parseInt(dex.hbd.his[int].target_vol)  + volhbd);
                                 }
                             }
                             if (his.length) {
@@ -258,14 +269,14 @@ function dao(num) {
                                 hi.d = 0;
                                 hi.v = 0;
                                 for (var int = 0; int < his.length; int++) {
-                                    if (hi.t < parseFloat(his[int].rate)) {
-                                        hi.t = parseFloat(his[int].rate);
+                                    if (hi.t < parseFloat(his[int].price)) {
+                                        hi.t = parseFloat(his[int].price);
                                     }
-                                    if (hi.b > parseFloat(his[int].rate)) {
-                                        hi.b = parseFloat(his[int].rate);
+                                    if (hi.b > parseFloat(his[int].price)) {
+                                        hi.b = parseFloat(his[int].price);
                                     }
 
-                                    hi.v += parseFloat(parseInt(his[int].amount) * parseInt(his[int].rate));
+                                    hi.v += parseInt(his[int].target_vol);
                                     hi.d += parseInt(his[int].amount);
                                 }
                                 if (!dex.hive.days)
@@ -280,21 +291,20 @@ function dao(num) {
                                 hib.v = 0;
                                 hib.d = 0;
                                 for (var int = 0; int < hisb.length; int++) {
-                                    if (hib.t < parseFloat(hisb[int].rate)) {
-                                        hib.t = parseFloat(hisb[int].rate);
+                                    if (hib.t < parseFloat(hisb[int].price)) {
+                                        hib.t = parseFloat(hisb[int].price);
                                     }
-                                    if (hib.b > parseFloat(hisb[int].rate)) {
-                                        hib.b = parseFloat(hisb[int].rate);
+                                    if (hib.b > parseFloat(hisb[int].price)) {
+                                        hib.b = parseFloat(hisb[int].price);
                                     }
-                                    hib.v += parseInt(parseInt(hisb[int].amount) * parseInt(hisb[int].rate));
+                                    hib.v += parseInt(hisb[int].target_vol);
                                     hib.d += parseInt(hisb[int].amount);
                                 }
                                 if (!dex.hbd.days)
                                     dex.hbd.days = {};
                                 dex.hbd.days[num] = hib;
                             }
-                            console.log(stats);
-                            post = post + `*****\n### DEX Report\n#### Volume Weighted Prices:\n* ${parseFloat(stats.HiveVWMA.rate).toFixed(3)} HIVE per ${config.TOKEN}\n* ${parseFloat(stats.HbdVWMA.rate).toFixed(3)} HBD per ${config.TOKEN}\n#### Daily Volume:\n* ${parseFloat(vol / 1000).toFixed(3)} ${config.TOKEN}\n* ${parseFloat(vols / 1000).toFixed(3)} HIVE\n* ${parseFloat(parseInt(volhbd) / 1000).toFixed(3)} HBD\n*****\n`;
+                            post = post + `*****\n### DEX Report\n#### Prices:\n* ${parseFloat(dex.hive.tick).toFixed(3)} HIVE per ${config.TOKEN}\n* ${parseFloat(dex.hbd.tick).toFixed(3)} HBD per ${config.TOKEN}\n#### Daily Volume:\n* ${parseFloat(vol / 1000).toFixed(3)} ${config.TOKEN}\n* ${parseFloat(vols / 1000).toFixed(3)} HIVE\n* ${parseFloat(parseInt(volhbd) / 1000).toFixed(3)} HBD\n*****\n`;
                             stats.movingWeight.dailyPool = bals.ra
                             bals.rc = bals.rc + bals.ra;
                             bals.ra = 0;
@@ -377,7 +387,6 @@ function dao(num) {
                     })
                 }
             ];
-            console.log(op);
             daops.push({ type: 'put', path: ['dex'], data: dex });
             daops.push({ type: 'put', path: ['stats'], data: stats });
             daops.push({ type: 'put', path: ['balances'], data: bals });
@@ -390,7 +399,12 @@ function dao(num) {
                     daops.splice(i, 1);
                 }
             }
-            store.batch(daops, [resolve, reject]);
+            for (var bali in bals) {
+                if(bals[bali] == 0 && bali.length > 2) {
+                    daops.push({ type: 'del', path: ['balances', bali] });
+                }
+            }
+            store.batch(daops, [resolve, reject, num]);
         });
     });
 }

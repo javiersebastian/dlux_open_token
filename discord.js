@@ -1,5 +1,6 @@
 const { Webhook, MessageBuilder } = require('discord-webhook-node');
 const config = require('./config');
+const { TXID } = require ('./index')
 const hook = new Webhook(config.hookurl);
 const fetch = require('node-fetch')
 
@@ -42,8 +43,28 @@ exports.contentToDiscord = (author, permlink) => {
 
 }
 
+exports.renderNFTtoDiscord = (script, uid, owner, set) => {
+    const embed = new MessageBuilder()
+                .setTitle(`New ${set} NFT minted!`)
+                .setAuthor(owner, 'https://cdn.discordapp.com/embed/avatars/0.png', `https://www.dlux.io/@${owner}`)
+                .setURL(`https://www.dlux.io/@${owner}#inventory/`)
+                .addField(`${set}:${uid}`, 'View this on dlux.io', true)
+                //.addField('Second field', 'this is not inline')
+                .setColor('#00b0f4')
+                //.setThumbnail('https://cdn.discordapp.com/embed/avatars/0.png')
+                //.setDescription('Oh look a description :)')
+                .setImage(`https://dluxdata.herokuapp.com/render/${script}/${uid}`)
+                //.setFooter('Hey its a footer', 'https://cdn.discordapp.com/embed/avatars/0.png')
+                .setTimestamp();
+
+            hook.send(embed)
+                .catch(e => console.log(e))
+
+}
+
 //exports.contentToDiscord('disregardfiat', 'dlux-development-update-jan-15')
 
-exports.postToDiscord = (msg) => {
-    hook.send(msg)
+exports.postToDiscord = (msg, id) => {
+    if(config.hookurl)hook.send(msg)
+    if(config.status)TXID.store(msg, id)
 }

@@ -1,6 +1,6 @@
 const config = require('./../config')
 const { store } = require("./../index");
-const { getPathNum } = require("./../getPathNum");
+const { getPathNum } = require("./../getPathObj");
 const { postToDiscord } = require('./../discord');
 const { updatePromote } = require('./../edb');
 
@@ -13,7 +13,7 @@ exports.send = (json, from, active, pc) => {
                 tbal = bals[1],
                 ops = [];
             send = parseInt(json.amount);
-            if (json.to && typeof json.to == 'string' && send > 0 && fbal >= send && active) { //balance checks
+            if (json.to && typeof json.to == 'string' && send > 0 && fbal >= send && active && json.to != from) { //balance checks
                 ops.push({ type: 'put', path: ['balances', from], data: parseInt(fbal - send) });
                 ops.push({ type: 'put', path: ['balances', json.to], data: parseInt(tbal + send) });
                 let msg = `@${from}| Sent @${json.to} ${parseFloat(parseInt(json.amount) / 1000).toFixed(3)} ${config.TOKEN}`
@@ -28,7 +28,7 @@ exports.send = (json, from, active, pc) => {
                         updatePromote(author,permlink, send)
                     }
                 }
-                if (config.hookurl) postToDiscord(msg)
+                if (config.hookurl || config.status) postToDiscord(msg, `${json.block_num}:${json.transaction_id}`)
                 ops.push({ type: 'put', path: ['feed', `${json.block_num}:${json.transaction_id}`], data: msg });
             } else {
                 ops.push({ type: 'put', path: ['feed', `${json.block_num}:${json.transaction_id}`], data: `@${from}| Invalid send operation` });

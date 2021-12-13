@@ -1,7 +1,8 @@
 const config = require('./config');
-const VERSION = 'v1.0.0b2'
+const VERSION = 'v1.1.0b2'
 exports.VERSION = VERSION
-
+exports.exit = exit;
+exports.processor = processor;
 const hive = require('@hiveio/dhive');
 var client = new hive.Client(config.clientURL);
 exports.client = client
@@ -33,28 +34,76 @@ broadcastClient.api.setOptions({ url: config.startURL });
 hiveClient.api.setOptions({ url: config.clientURL });
 console.log('Using APIURL: ', config.clientURL)
 exports.hiveClient = hiveClient
-
+//non-consensus node memory
+var plasma = {
+        consensus: '',
+        pending: {},
+        page: [],
+        hashLastIBlock: 0,
+        hashSecIBlock: 0
+            //pagencz: []
+    },
+    jwt;
+exports.plasma = plasma
 var NodeOps = [];
+//aare these used still?
 exports.GetNodeOps = function() { return NodeOps }
 exports.newOps = function(array) { NodeOps = array }
 exports.unshiftOp = function(op) { NodeOps.unshift(op) }
 exports.pushOp = function(op) { NodeOps.push(op) }
 exports.spliceOp = function(i) { NodeOps.splice(i, 1) }
-
+var status = {
+    cleaner: [],
+}
+exports.status = status
+let TXID = {
+    store: function (msg, txid){
+        try {
+            status[txid.split(':')[1]] = msg
+            status.cleaner.push(txid)
+        } catch (e){console.log(e)}
+    },
+    clean: function (blocknum){
+        TXID.blocknumber = blocknum
+        try {
+            if(status.cleaner.length){
+                var again = false
+                do {
+                    if (parseInt(status.cleaner[0].split(':')[0]) <= blocknum - config.history){
+                        delete status[status.cleaner[0].split(':')[1]]
+                        status.cleaner.shift()
+                        again = true
+                    } else {
+                        again = false
+                    }
+                } while (again)
+            }
+        } catch (e){console.log('Try Clean Status failed:', e)}
+    },
+    getBlockNum: function (){
+        return TXID.blocknumber
+    },
+    blocknumber: 0,
+    streaming: false,
+    current: function(){TXID.streaming = true},
+    reset: function(){TXID.streaming = false, TXID.blocknumber = 0, status = {
+    cleaner: [],
+}},
+}
+exports.TXID = TXID
 const API = require('./routes/api');
-const { getPathNum } = require("./getPathNum");
 const HR = require('./processing_routes/index')
 const { enforce } = require("./enforce");
-exports.exit = exit;
 const { tally } = require("./tally");
 const { voter } = require("./voter");
-const { report } = require("./report");
+const { report, sig_submit } = require("./report");
 const { ipfsSaveState } = require("./ipfsSaveState");
-const { waitup } = require("./waitup");
 const { dao } = require("./dao");
-const { release, recast } = require('./lil_ops')
+const { recast } = require('./lil_ops')
+const { Base64, NFT, Chron, release } = require('./helpers');
 const hiveState = require('./processor');
-const { getPathObj } = require('./getPathObj');
+const { getPathObj, getPathNum, getPathSome } = require('./getPathObj');
+const { consolidate, sign, createAccount, updateAccount } = require('./msa')
 const api = express()
 var http = require('http').Server(api);
 var escrow = false;
@@ -66,15 +115,15 @@ var startingBlock = config.starting_block
 const streamMode = args.mode || 'irreversible';
 console.log("Streaming using mode", streamMode);
 var processor;
+exports.processor = processor
 var live_dex = {}, //for feedback, unused currently
     pa = []
 var recents = []
     //HIVE API CODE
 
 //Start Program Options   
-//startWith('QmUvtACfkn5JeVxDe35YxzeYm1p4DgVoNAnLaSjL4SAXnh') //for testing and replaying
+//startWith('QmZQSh3za4wG1skPtC7HaehKHLdP8Ya9VbQni1YHDaL3GU', true) //for testing and replaying 58859101
 dynStart(config.leader)
-
 
 // API defs
 api.use(API.https_redirect);
@@ -88,10 +137,27 @@ api.get('/api/tickers', API.tickers);
 api.get('/api/orderbook', API.orderbook);
 api.get('/api/orderbook/:ticker_id', API.orderbook);
 api.get('/api/pairs', API.pairs);
-api.get('/api/historical_trades', API.historical_trades);
-api.get('/api/historical_trades/:ticker_id', API.historical_trades);
+api.get('/api/historical', API.historical_trades);
+api.get('/api/historical/:ticker_id', API.historical_trades);
+api.get('/api/recent/:ticker_id', API.chart);
 api.get('/api/mirrors', API.mirrors);
 api.get('/api/coin_detail', API.detail);
+api.get('/api/nfts/:user', API.nfts);
+api.get('/api/nft/:set/:item', API.item);
+api.get('/api/sets', API.sets);
+api.get('/api/set/:set', API.set);
+api.get('/api/auctions', API.auctions);
+api.get('/api/auctions/:set', API.auctions);
+api.get('/api/mintauctions', API.mint_auctions);
+api.get('/api/mintauctions/:set', API.mint_auctions);
+api.get('/api/sales', API.sales);
+api.get('/api/sales/:set', API.sales);
+api.get('/api/mintsales', API.mint_sales);
+api.get('/api/mintsales/:set', API.mint_sales);
+api.get('/api/mintsupply', API.mint_supply);
+api.get('/api/mintsupply/:set', API.mint_supply);
+api.get('/api/pfp/:user', API.official);
+api.get('/api/trades/:kind/:user', API.limbo);
 api.get('/@:un', API.user);
 api.get('/blog/@:un', API.blog);
 api.get('/dapps/@:author', API.getAuthorPosts);
@@ -106,10 +172,13 @@ api.get('/posts', API.posts); //votable posts
 api.get('/feed', API.feed); //all side-chain transaction in current day
 api.get('/runners', API.runners); //list of accounts that determine consensus... will also be the multi-sig accounts
 api.get('/queue', API.queue);
+api.get('/api/protocol', API.protocol);
+api.get('/api/status/:txid', API.status);
 api.get('/pending', API.pending); // The transaction signer now can sign multiple actions per block and this is nearly always empty, still good for troubleshooting
 // Some HIVE APi is wrapped here to support a stateless frontend built on the cheap with dreamweaver
 // None of these functions are required for token functionality and should likely be removed from the community version
 api.get('/api/:api_type/:api_call', API.hive_api);
+api.get('/hapi/:api_type/:api_call', API.hive_api);
 api.get('/getwrap', API.getwrap);
 api.get('/getauthorpic/:un', API.getpic);
 api.get('/getblog/:un', API.getblog);
@@ -117,18 +186,6 @@ api.get('/getblog/:un', API.getblog);
 http.listen(config.port, function() {
     console.log(`${config.TOKEN} token API listening on port ${config.port}`);
 });
-
-//non-consensus node memory
-var plasma = {
-        consensus: '',
-        pending: {},
-        page: [],
-        hashLastIBlock: 0
-            //pagencz: []
-    },
-    jwt;
-exports.jwt = jwt;
-
 //grabs an API token for IPFS pinning of TOKEN posts
 if (config.rta && config.rtp) {
     rtrades.handleLogin(config.rta, config.rtp)
@@ -142,24 +199,46 @@ function startApp() {
     processor.on('power_down', HR.power_down);
     processor.on('power_grant', HR.power_grant);
     processor.on('vote_content', HR.vote_content);
-    processor.on('dex_buy', HR.dex_buy);
-    processor.on('dex_hive_sell', HR.dex_hive_sell);
-    processor.on('dex_hbd_sell', HR.dex_hbd_sell);
-    processor.on('dex_clear', HR.dex_clear)
-    processor.onOperation('escrow_transfer', HR.escrow_transfer);
-    processor.onOperation('escrow_approve', HR.escrow_approve);
-    processor.onOperation('escrow_dispute', HR.escrow_dispute);
-    processor.onOperation('escrow_release', HR.escrow_release);
+    processor.on('dex_sell', HR.dex_sell);
+    processor.on('dex_clear', HR.dex_clear);
     processor.on('gov_down', HR.gov_down);
     processor.on('gov_up', HR.gov_up);
-    processor.on('node_add', HR.node_add); //node add and update
+    processor.on('node_add', HR.node_add);
     processor.on('node_delete', HR.node_delete);
     processor.on('report', HR.report);
     processor.on('queueForDaily', HR.q4d)
     processor.on('nomention', HR.nomention)
+    processor.on('ft_bid', HR.ft_bid)
+    processor.on('ft_auction', HR.ft_auction)
+    processor.on('ft_sell_cancel', HR.ft_sell_cancel)
+    processor.on('ft_buy', HR.ft_buy)
+    processor.on('ft_sell', HR.ft_sell)
+    processor.on('ft_escrow_cancel', HR.ft_escrow_cancel)
+    processor.on('ft_escrow_complete', HR.ft_escrow_complete)
+    processor.on('ft_escrow', HR.ft_escrow)
+    processor.on('fts_sell_h', HR.fts_sell_h)
+    processor.on('fts_sell_hcancel', HR.fts_sell_hcancel)
+    processor.on('nft_buy', HR.nft_buy)
+    processor.on('nft_sell', HR.nft_sell)
+    processor.on('nft_sell_cancel', HR.nft_sell_cancel)
+    processor.on('ft_transfer', HR.ft_transfer)
+    processor.on('ft_airdrop', HR.ft_airdrop)
+    processor.on('nft_transfer', HR.nft_transfer)
+    processor.on('nft_auction', HR.nft_auction)
+    processor.on('nft_bid', HR.nft_bid)
+    processor.on('nft_transfer_cancel', HR.nft_transfer_cancel)
+    processor.on('nft_reserve_transfer', HR.nft_reserve_transfer)
+    processor.on('nft_reserve_complete', HR.nft_reserve_complete)
+    processor.on('nft_define', HR.nft_define)
+    processor.on('nft_add_roy', HR.nft_add_roy)
+    processor.on('nft_div', HR.nft_div)
+    processor.on('nft_define_delete', HR.nft_define_delete)
+    processor.on('nft_melt', HR.nft_delete)
+    processor.on('nft_mint', HR.nft_mint)
+    processor.on('nft_pfp', HR.nft_pfp)
     processor.onOperation('comment_options', HR.comment_options);
     processor.on('cjv', HR.cjv);
-    processor.on('sig', HR.sig); //dlux is for putting executable programs into IPFS... this is for additional accounts to sign the code as non-malicious
+    processor.on('sig_submit', HR.sig_submit); //dlux is for putting executable programs into IPFS... this is for additional accounts to sign the code as non-malicious
     processor.on('cert', HR.cert); // json.cert is an open ended hope to interact with executable posts... unexplored
     processor.onOperation('vote', HR.vote) //layer 2 voting
     processor.onOperation('transfer', HR.transfer);
@@ -167,168 +246,127 @@ function startApp() {
     processor.onOperation('comment', HR.comment);
     //do things in cycles based on block time
     processor.onBlock(
-        function(num, pc) {
+        function(num, pc, prand, bh) {
             console.log(num)
+            TXID.clean(num)
             return new Promise((resolve, reject) => {
-                //store.batch([{ type: 'put', path: ['stats', 'realtime'], data: num }], )
-                store.someChildren(['chrono'], {
-                    gte: "" + num,
+                let Pchron = getPathSome(['chrono'],{
+                    gte: "" + num - 1,
                     lte: "" + (num + 1)
-                }, function(e, a) {
-                    if (e) { console.log('chrono err: ' + e) }
+                })
+                let Pmss = getPathSome(['mss'],{
+                    gte: "" + (num - 1000000),
+                    lte: "" + (num - 100)
+                }) //resign mss
+                let Pmsa = getPathObj(['msa'])
+                Promise.all([Pchron, Pmss, Pmsa]).then(mem => {
+                    var a = mem[0],
+                        mss = mem[1], //resign mss
+                        msa = mem[2] //if length > 80... sign these
                     let chrops = {},
-                        promises = []
+                        promises = [],
+                        msa_keys = Object.keys(msa)
+                        if(num % 100 !== 50){
+                            if(msa_keys.length > 80){
+                                promises.push(new Promise((res,rej)=>{
+                                    sig_submit(consolidate(num, plasma, bh))
+                                    .then(nodeOp => {
+                                        res('SAT')
+                                        NodeOps.unshift(nodeOp)
+                                    })
+                                    .catch(e => { rej(e) })
+                                }))
+                            }
+                            for(var missed = 0; missed < mss.length; missed++){
+                                if(mss[missed].split(':').length == 1){
+                                    missed_num = mss[missed]
+                                    promises.push(new Promise((res,rej)=>{
+                                        sig_submit(sign(num, plasma, missed_num, bh))
+                                        .then(nodeOp => {
+                                            res('SAT')
+                                            if(JSON.parse(nodeOp[1][1].json).sig){
+                                                NodeOps.unshift(nodeOp)
+                                            }
+                                        })
+                                        .catch(e => { rej(e) })
+                                    })) 
+                                    break;
+                                }
+                            }
+                        }
                     for (var i in a) {
                         chrops[a[i]] = a[i]
                     }
-                    let totalPromises = chrops.length
-
-
-                    for (var i in chrops) {
+                    var ints = 0
+                   for (var i in chrops) {
+                        ints++
                         let delKey = chrops[i]
-                        store.get(['chrono', chrops[i]], function(e, b) {
+                        store.getWith(['chrono', chrops[i]], {delKey, ints}, function(e, b, passed) {
                             switch (b.op) {
+                                case 'mint':
+                                    //{op:"mint", set:json.set, for: from}
+                                    let setp = getPathObj(['sets', b.set]);
+                                    promises.push(NFT.mintOp([setp], passed.delKey, num, b, `${passed.ints}${prand}`))
+                                    break;
+                                case 'ahe':
+                                    let ahp = getPathObj(['ah', b.item]),
+                                        setahp = ''
+                                        if (b.item.split(':')[0] != 'Qm') setahp = getPathObj(['sets', b.item.split(':')[0]])
+                                        else setahp = getPathObj(['sets', `Qm${b.item.split(':')[1]}`])
+                                    promises.push(NFT.AHEOp([ahp, setahp], passed.delKey, num, b))
+                                    break;
+                                case 'ame':
+                                    let amp = getPathObj(['am', b.item]),
+                                        setamp = ''
+                                        if (b.item.split(':')[0] != 'Qm') setamp = getPathObj(['sets', b.item.split(':')[0]])
+                                        else setamp = getPathObj(['sets', `Qm${b.item.split(':')[1]}`])
+                                    promises.push(NFT.AMEOp([amp, setamp], passed.delKey, num, b))
+                                    break;
+                                case 'div':
+                                    let contract = getPathObj(['div', b.set]),
+                                        set = getPathObj(['sets', b.set])
+                                    promises.push(NFT.DividendOp([contract, set], passed.delKey, num, b))
+                                    break;
                                 case 'del_pend':
-                                    store.batch([{ type: 'del', path: ['chrono', delKey] }, { type: 'del', path: ['pend', `${b.author}/${b.permlink}`]}], [function() {}, function() { console.log('failure') }])
+                                    store.batch([{ type: 'del', path: ['chrono', passed.delKey] }, { type: 'del', path: ['pend', `${b.author}/${b.permlink}`]}], [function() {}, function() { console.log('failure') }])
                                     break;
                                 case 'ms_send':
                                     promises.push(recast(b.attempts, b.txid, num))
-                                    store.batch([{ type: 'del', path: ['chrono', delKey] }], [function() {}, function() { console.log('failure') }])
+                                    store.batch([{ type: 'del', path: ['chrono', passed.delKey] }], [function() {}, function() { console.log('failure') }])
                                     break;
                                 case 'expire':
                                     promises.push(release(b.from, b.txid, num))
-                                    store.batch([{ type: 'del', path: ['chrono', delKey] }], [function() {}, function() { console.log('failure') }])
+                                    store.batch([{ type: 'del', path: ['chrono', passed.delKey] }], [function() {}, function() { console.log('failure') }])
                                     break;
                                 case 'check':
                                     promises.push(enforce(b.agent, b.txid, { id: b.id, acc: b.acc }, num))
-                                    store.batch([{ type: 'del', path: ['chrono', delKey] }], [function() {}, function() { console.log('failure') }])
+                                    store.batch([{ type: 'del', path: ['chrono', passed.delKey] }], [function() {}, function() { console.log('failure') }])
                                     break;
                                 case 'denyA':
                                     promises.push(enforce(b.agent, b.txid, { id: b.id, acc: b.acc }, num))
-                                    store.batch([{ type: 'del', path: ['chrono', delKey] }], [function() {}, function() { console.log('failure') }])
+                                    store.batch([{ type: 'del', path: ['chrono', passed.delKey] }], [function() {}, function() { console.log('failure') }])
                                     break;
                                 case 'denyT':
                                     promises.push(enforce(b.agent, b.txid, { id: b.id, acc: b.acc }, num))
-                                    store.batch([{ type: 'del', path: ['chrono', delKey] }], [function() {}, function() { console.log('failure') }])
+                                    store.batch([{ type: 'del', path: ['chrono', passed.delKey] }], [function() {}, function() { console.log('failure') }])
                                     break;
                                 case 'gov_down': //needs work and testing
                                     let plb = getPathNum(['balances', b.by]),
                                         tgovp = getPathNum(['gov', 't']),
                                         govp = getPathNum(['gov', b.by])
-                                    promises.push(govDownOp([plb, tgovp, govp], b.by, delKey, num, delKey.split(':')[1], b))
-
-                                    function govDownOp(promies, from, delkey, num, id, b) {
-                                        return new Promise((resolve, reject) => {
-                                            Promise.all(promies)
-                                                .then(bals => {
-                                                    let lbal = bals[0],
-                                                        tgov = bals[1],
-                                                        gbal = bals[2],
-                                                        ops = []
-                                                    if (gbal - b.amount < 0) {
-                                                        b.amount = gbal
-                                                    }
-                                                    ops.push({ type: 'put', path: ['balances', from], data: lbal + b.amount })
-                                                    ops.push({ type: 'put', path: ['gov', from], data: gbal - b.amount })
-                                                    ops.push({ type: 'put', path: ['gov', 't'], data: tgov - b.amount })
-                                                    ops.push({ type: 'put', path: ['feed', `${num}:vop_${id}`], data: `@${b.by}| ${parseFloat(b.amount/1000).toFixed(3)} ${config.TOKEN} withdrawn from governance.` })
-                                                    ops.push({ type: 'del', path: ['chrono', delkey] })
-                                                    ops.push({ type: 'del', path: ['govd', b.by, delkey] })
-                                                    store.batch(ops, [resolve, reject])
-                                                })
-                                                .catch(e => { console.log(e) })
-                                        })
-                                    }
+                                    promises.push(Chron.govDownOp([plb, tgovp, govp], b.by, passed.delKey, num, passed.delKey.split(':')[1], b))
                                     break;
                                 case 'power_down': //needs work and testing
                                     let lbp = getPathNum(['balances', b.by]),
                                         tpowp = getPathNum(['pow', 't']),
                                         powp = getPathNum(['pow', b.by])
-                                    promises.push(powerDownOp([lbp, tpowp, powp], b.by, delKey, num, delKey.split(':')[1], b))
-
-                                    function powerDownOp(promies, from, delkey, num, id, b) {
-                                        return new Promise((resolve, reject) => {
-                                            Promise.all(promies)
-                                                .then(bals => {
-                                                    let lbal = bals[0],
-                                                        tpow = bals[1],
-                                                        pbal = bals[2],
-                                                        ops = []
-                                                    if (pbal - b.amount < 0) {
-                                                        b.amount = pbal
-                                                    }
-                                                    ops.push({ type: 'put', path: ['balances', from], data: lbal + b.amount })
-                                                    ops.push({ type: 'put', path: ['pow', from], data: pbal - b.amount })
-                                                    ops.push({ type: 'put', path: ['pow', 't'], data: tpow - b.amount })
-                                                    ops.push({ type: 'put', path: ['feed', `${num}:vop_${id}`], data: `@${b.by}| powered down ${parseFloat(b.amount/1000).toFixed(3)} ${config.TOKEN}` })
-                                                    ops.push({ type: 'del', path: ['chrono', delkey] })
-                                                    ops.push({ type: 'del', path: ['powd', b.by, delkey] })
-                                                    store.batch(ops, [resolve, reject])
-                                                })
-                                                .catch(e => { console.log(e) })
-                                        })
-                                    }
+                                    promises.push(Chron.powerDownOp([lbp, tpowp, powp], b.by, passed.delKey, num, passed.delKey.split(':')[1], b))
                                     break;
                                 case 'post_reward':
-                                    promises.push(postRewardOP(b, num, delKey.split(':')[1], delKey))
-
-                                    function postRewardOP(l, num, id, delkey) {
-                                        return new Promise((resolve, reject) => {
-                                            store.get(['posts', `${l.author}/${l.permlink}`], function(e, b) {
-                                                let ops = []
-                                                let totals = {
-                                                    totalWeight: 0,
-                                                    linearWeight: 0
-                                                }
-                                                for (vote in b.votes) {
-                                                    totals.totalWeight += b.votes[vote].v
-                                                    linearWeight = parseInt(b.votes[vote].v * ((201600 - (b.votes[vote].b - b.block)) / 201600))
-                                                    totals.linearWeight += linearWeight
-                                                    b.votes[vote].w = linearWeight
-                                                }
-                                                let half = parseInt(totals.totalWeight / 2)
-                                                totals.curationTotal = half
-                                                totals.authorTotal = totals.totalWeight - half
-                                                b.t = totals
-                                                ops.push({
-                                                    type: 'put',
-                                                    path: ['pendingpayment', `${b.author}/${b.permlink}`],
-                                                    data: b
-                                                })
-                                                ops.push({ type: 'del', path: ['chrono', delkey] })
-                                                ops.push({ type: 'put', path: ['feed', `${num}:vop_${id}`], data: `@${b.author}| Post:${b.permlink} voting expired.` })
-                                                ops.push({ type: 'del', path: ['post', `${b.author}/${b.permlink}`] })
-                                                store.batch(ops, [resolve, reject])
-                                            })
-                                        })
-                                    }
-
+                                    promises.push(Chron.postRewardOP(b, num, passed.delKey.split(':')[1], passed.delKey))
                                     break;
                                 case 'post_vote':
-                                    promises.push(postVoteOP(b, delKey))
-
-                                    function postVoteOP(l, delkey) {
-                                        return new Promise((resolve, reject) => {
-                                            store.get(['posts', `${l.author}/${l.permlink}`], function(e, b) {
-                                                let ops = []
-                                                let totalWeight = 0
-                                                for (vote in b.votes) {
-                                                    totalWeight += b.votes[vote].v
-                                                }
-                                                b.v = totalWeight
-                                                if (b.v > 0) {
-                                                    ops.push({
-                                                        type: 'put',
-                                                        path: ['pendingvote', `${l.author}/${l.permlink}`],
-                                                        data: b
-                                                    })
-                                                }
-                                                ops.push({ type: 'del', path: ['chrono', delkey] })
-                                                store.batch(ops, [resolve, reject])
-                                            })
-                                        })
-                                    }
-
+                                    promises.push(Chron.postVoteOP(b, passed.delKey))
                                     break;
                                 default:
 
@@ -339,20 +377,23 @@ function startApp() {
                     if (num % 100 === 0 && processor.isStreaming()) {
                         client.database.getDynamicGlobalProperties()
                             .then(function(result) {
-                                console.log('At block', num, 'with', result.head_block_number - num, `left until real-time. DAO @ ${(num - 20000) % 30240}`)
+                                console.log('At block', num, 'with', result.head_block_number - num, `left until real-time. DAO in ${30240 - ((num - 20000) % 30240)} blocks`)
                             });
                     }
-                    if (num % 100 === 5 && processor.isStreaming()) {
-                        //check(num) //not promised, read only
-                    }
-                    if (num % 100 === 50 && processor.isStreaming()) {
-                        plasma.bh = processor.getBlockHeader()
-                        report(plasma)
+                    if (num % 100 === 50) {
+                        setTimeout(function(a) {
+                            if(plasma.hashLastIBlock == a || plasma.hashSecIBlock == a){
+                                exit(plasma.hashLastIBlock)
+                            }
+                        }, 620000, plasma.hashLastIBlock)
+                        promises.push(new Promise((res,rej)=>{
+                            report(plasma, consolidate(num, plasma, bh))
                             .then(nodeOp => {
-                                //console.log(nodeOp)
-                                NodeOps.unshift(nodeOp)
+                                res('SAT')
+                                if(processor.isStreaming())NodeOps.unshift(nodeOp)
                             })
-                            .catch(e => { console.log(e) })
+                            .catch(e => { rej(e) })
+                        }))
                     }
                     if ((num - 20003) % 30240 === 0) { //time for daily magic
                         promises.push(dao(num))
@@ -368,6 +409,7 @@ function startApp() {
                             const blockState = Buffer.from(stringify([num, obj]))
                             ipfsSaveState(num, blockState)
                                 .then(pla => {
+                                    plasma.hashSecIBlock = plasma.hashLastIBlock
                                     plasma.hashLastIBlock = pla.hashLastIBlock
                                     plasma.hashBlock = pla.hashBlock
                                 })
@@ -375,19 +417,7 @@ function startApp() {
 
                         })
                     }
-                    /*
-                //rest is out of consensus
-                for (var p = 0; p < pa.length; p++) { //automate some tasks... nearly positive this doesn't work
-                    var r = eval(pa[p][1])
-                    if (r) {
-                        NodeOps.push([
-                            [0, 0],
-                            [pa[p][2], pa[p][3]]
-                        ])
-                    }
-                }
-                */
-                    if (config.active && processor.isStreaming()) {
+                    if (config.active && processor.isStreaming() ) {
                         store.get(['escrow', config.username], function(e, a) {
                             if (!e) {
                                 for (b in a) {
@@ -402,9 +432,13 @@ function startApp() {
                                 var ops = [],
                                     cjbool = false,
                                     votebool = false
-                                for (i = 0; i < NodeOps.length; i++) {
+                                signerloop: for (i = 0; i < NodeOps.length; i++) {
                                     if (NodeOps[i][0][1] == 0 && NodeOps[i][0][0] <= 100) {
-                                        if (NodeOps[i][1][0] == 'custom_json' && !cjbool){
+                                        if (NodeOps[i][1][0] == 'custom_json' && JSON.parse(NodeOps[i][1][1].json).sig_block && num - 100 > JSON.parse(NodeOps[i][1][1].json).sig_block){
+                                            NodeOps.splice(i, 1)
+                                            continue signerloop
+                                        }
+                                        if (NodeOps[i][1][0] == 'custom_json' && !cjbool ) {
                                             ops.push(NodeOps[i][1])
                                             NodeOps[i][0][1] = 1
                                             cjbool = true
@@ -469,14 +503,17 @@ function startApp() {
         });
     processor.onStreamingStart(HR.onStreamingStart);
     processor.start();
-    exports.processor = processor;
+    setTimeout(function(){
+        API.start();
+    }, 3000);
 }
 
 function exit(consensus) {
     console.log(`Restarting with ${consensus}...`);
+
     processor.stop(function() {});
         if (consensus) {
-            startWith(consensus)
+            startWith(consensus, true)
         } else {
             dynStart(config.leader)
         }
@@ -487,7 +524,6 @@ function waitfor(promises_array) {
         Promise.all(promises_array)
             .then(r => {
                 for (i = 0; i < r.length; i++) {
-                    console.log(r[i])
                     if (r[i].consensus) {
                         plasma.consensus = r[1].consensus
                     }
@@ -520,12 +556,13 @@ function cycleAPI() {
 //pulls the latest activity of an account to find the last state put in by an account to dynamically start the node. 
 //this will include other accounts that are in the node network and the consensus state will be found if this is the wrong chain
 function dynStart(account) {
+    API.start()
     let accountToQuery = account || config.username
     hiveClient.api.setOptions({ url: config.startURL });
     console.log('Starting URL: ', config.startURL)
     hiveClient.api.getAccountHistory(accountToQuery, -1, 100, ...walletOperationsBitmask, function(err, result) {
         if (err) {
-            console.log(err)
+            console.log('errr', err)
             dynStart(config.leader)
         } else {
             hiveClient.api.setOptions({ url: config.clientURL });
@@ -537,7 +574,7 @@ function dynStart(account) {
             }
             if (recents.length) {
                 const mostRecent = recents.shift()
-                console.log(mostRecent)
+                console.log({mostRecent})
                 if (recents.length === 0) {
                     startWith(config.engineCrank)
                 } else {
@@ -553,7 +590,7 @@ function dynStart(account) {
 
 
 //pulls state from IPFS, loads it into memory, starts the block processor
-function startWith(hash) {
+function startWith(hash, second) {
     console.log(`${hash} inserted`)
     if (hash) {
         console.log(`Attempting to start from IPFS save state ${hash}`);
@@ -567,59 +604,23 @@ function startWith(hash) {
                     plasma.hashBlock = data[0]
                     plasma.hashLastIBlock = hash
                     store.del([], function(e) {
-                        if (!e) {
+                        if (!e && (second || data[0] > API.RAM.head - 325)) {
                             if (hash) {
                                 var cleanState = data[1]
-                                //stuff to make MS work
-                                cleanState.stats.MSHeld = 0
-                                cleanState.stats.max_transfer = 20
+                                cleanState.runners.disregardfiat = true
+                                cleanState.runners.markegiles = true
+                                cleanState.runners['dlux-io'] = true
                                 store.put([], cleanState, function(err) {
                                     if (err) {
-                                        console.log(err)
+                                        console.log('errr',err)
                                     } else {
                                         store.get(['stats', 'lastBlock'], function(error, returns) {
                                             if (!error) {
                                                 console.log(`State Check:  ${returns}\nAccount: ${config.username}\nKey: ${config.active.substr(0,3)}...`)
-                                                var supply = 0
-                                                var lbal = 0
-                                                for (bal in cleanState.balances) {
-                                                    supply += cleanState.balances[bal]
-                                                    lbal += cleanState.balances[bal]
-                                                }
-                                                var gov = 0,
-                                                    govt = 0
-                                                var con = 0
-                                                for (user in cleanState.contracts) {
-                                                    for (contract in cleanState.contracts[user]) {
-                                                        if (cleanState.contracts[user][contract].amount && !cleanState.contracts[user][contract].buyer && (cleanState.contracts[user][contract].type == 'ss' || cleanState.contracts[user][contract].type == 'ds')) {
-                                                            supply += cleanState.contracts[user][contract].amount
-                                                            con += cleanState.contracts[user][contract].amount
-                                                        }
-                                                    }
-                                                }
-                                                let coll = 0
-                                                for (user in cleanState.col) {
-                                                    supply += cleanState.col[user]
-                                                    coll += cleanState.col[user]
-                                                }
-                                                try { govt = cleanState.gov.t - coll } catch (e) {}
-                                                for (bal in cleanState.gov) {
-                                                    if (bal != 't') {
-                                                        supply += cleanState.gov[bal]
-                                                        gov += cleanState.gov[bal]
-                                                    }
-                                                }
-                                                var pow = 0,
-                                                    powt = cleanState.pow.t
-                                                for (bal in cleanState.pow) {
-                                                    if (bal != 't') {
-                                                        supply += cleanState.pow[bal]
-                                                        pow += cleanState.pow[bal]
-                                                    }
-                                                }
-                                                console.log(`supply check:state:${cleanState.stats.tokenSupply} vs check: ${supply}: ${cleanState.stats.tokenSupply - supply}`)
-                                                if (cleanState.stats.tokenSupply != supply) {
-                                                    console.log({ lbal, gov, govt, pow, powt, con })
+                                                let info = API.coincheck(cleanState)
+                                                console.log('check', info.check)
+                                                if (cleanState.stats.tokenSupply != info.supply) {
+                                                    console.log('check',info.info)
                                                 }
                                             }
                                         })
@@ -638,7 +639,66 @@ function startWith(hash) {
                                     }
                                 })
                             }
-                        } else { console.log(e) }
+                        } else if(!second) {
+                            var promises = []
+                            for( var runner in data[1].runners) {
+                                    promises.push(new Promise((resolve, reject) => {
+                                        console.log('runner', runner)
+                                        hiveClient.api.getAccountHistory(runner, -1, 100, ...walletOperationsBitmask, function(err, result) {
+                                            var recents = {block:0}
+                                            if (err) {
+                                                console.log('error in retrieval')
+                                                resolve({hash:null,block:null})
+                                            } else {
+                                                //hiveClient.api.setOptions({ url: config.clientURL });
+                                                let ebus = result.filter(tx => tx[1].op[1].id === `${config.prefix}report`)
+                                                for (i = ebus.length - 1; i >= 0; i--) {
+                                                    if (JSON.parse(ebus[i][1].op[1].json).hash) {
+                                                        if(recents.block < JSON.parse(ebus[i][1].op[1].json).block){
+                                                            recents = {
+                                                                hash: JSON.parse(ebus[i][1].op[1].json).hash,
+                                                                block: parseInt(JSON.parse(ebus[i][1].op[1].json).block)}
+                                                        }
+                                                        else {
+                                                            recents[0] = {hash: JSON.parse(ebus[i][1].op[1].json).hash,
+                                                            block: parseInt(JSON.parse(ebus[i][1].op[1].json).block)
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                if (recents.block) {
+                                                    resolve(recents)
+                                                } else {
+                                                    console.log('error in processing')
+                                                    resolve({hash:null,block:null})
+                                                }
+                                            }
+                                        });
+                                    }))
+                                }
+                            Promise.all(promises).then(values =>{
+                                var newest = 0, votes = {}, blocks = {}
+                                for(var acc in values){
+                                    if(values[acc].block >= newest && !votes[values[acc].hash]){
+                                        newest = values[acc].block
+                                        votes[values[acc].hash] = 1
+                                        blocks[values[acc].hash] = values[acc].block
+                                    } else if(values[acc].block >= newest && votes[values[acc].hash]){
+                                        votes[values[acc].hash]++
+                                    }
+                                }
+                                var tally = 0, winner = null
+                                for(hash in votes){
+                                    if(votes[hash] >= tally && blocks[values[acc].hash] == newest){
+                                        tally = votes[hash]
+                                        var winner = hash
+                                    }
+                                }
+                                if(winner)startWith(winner, true)
+                                else startWith(hash, true)
+                                        return
+                            })
+                        }
                     })
                 }
             } else {
@@ -649,10 +709,10 @@ function startWith(hash) {
     } else {
         startingBlock = config.starting_block
         store.del([], function(e) {
-            if (e) { console.log(e) }
+            if (e) { console.log({e}) }
             store.put([], statestart, function(err) {
                 if (err) {
-                    console.log(err)
+                    console.log({err})
                 } else {
                     store.get(['stats', 'hashLastIBlock'], function(error, returns) {
                         if (!error) {
@@ -664,4 +724,18 @@ function startWith(hash) {
             })
         })
     }
+}
+
+function waitup(promises_array, promise_chain_array, resolve_reject) {
+    Promise.all(promises_array)
+        .then(r => {
+            for(var i = 0; i < r.length; i++) {
+                if(r[i].sig){plasma.sig ={
+                    sig: r[i].sig,
+                    block: r[i].block
+                }}
+            }
+            resolve_reject[0](promise_chain_array);
+        })
+        .catch(e => { resolve_reject[1](e); });
 }

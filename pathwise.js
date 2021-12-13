@@ -4,6 +4,7 @@ var bytewise = require('bytewise');
 var type = require('component-type');
 var after = require('after');
 var streamToArray = require('stream-to-array');
+const stringify = require('json-stable-stringify');
 
 module.exports = Pathwise;
 
@@ -40,7 +41,7 @@ Pathwise.prototype._write = function(batch, key, obj, fn) {
             this._write(batch, key, arrToObj(obj), fn);
             break;
         default:
-            batch.put(bytewise.encode(key), JSON.stringify(obj));
+            batch.put(bytewise.encode(key), stringify(obj));
             break;
     }
 }
@@ -95,6 +96,40 @@ Pathwise.prototype.get = function(path, fn) {
             });
         } catch (err) { er = err }
         fn(er, ret);
+    });
+};
+
+Pathwise.prototype.getWith = function(path, obj, fn) {
+    var ret = {};
+    var el = ret;
+
+    streamToArray(this._db.createReadStream({
+        start: path,
+        end: path.concat(undefined)
+    }), function(err, data) {
+        if (err) return fn(err);
+        let er = null
+        try {
+            data.forEach(function(kv) {
+                var segs = kv.key.slice(path.length);
+                if (segs.length) {
+                    segs.forEach(function(seg, idx) {
+                        if (!el[seg]) {
+                            if (idx == segs.length - 1) {
+                                el[seg] = kv.value;
+                            } else {
+                                el[seg] = {};
+                            }
+                        }
+                        el = el[seg];
+                    });
+                    el = ret;
+                } else {
+                    ret = kv.value;
+                }
+            });
+        } catch (err) { er = err }
+        fn(er, ret, obj);
     });
 };
 
