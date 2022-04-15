@@ -3,7 +3,6 @@ const { renderNFTtoDiscord, postToDiscord } = require('./discord')
 const { add, addMT, burn, chronAssign, hashThis } = require('./lil_ops')
 const config = require('./config')
 const stringify = require('json-stable-stringify');
-const { DEX } = require('./processing_routes/dex')
 exports.sortBuyArray = (array, key) => array.sort(function(a, b) {
     return b[key] - a[key];
 })
@@ -66,39 +65,43 @@ const NFT = {
             const seed = parseInt(rand.slice(0, 12), 16)
             console.log({rand, seed})
             Promise.all(promies).then(mem => {
-                var set = mem[0]
+                var set = mem[0],
+                    nft
                 if (set.i === "0")NFT.finalizeFee(set.f)
-                switch (set.t) {
-                    case 1:
-                        const max = Base64.toNumber(set.m)
-                        const len = set.m.split('').length
-                        const min = Base64.toNumber(set.o)
-                        const total = max - min
-                        var select = seed % total
-                        var selected = Base64.fromNumber(min + select)
-                        var inserted = false
-                        if(set.u){
-                            while (!inserted) {
-                                while (selected.split('').length < len) {selected = '0' + selected}
-                                if (set.u.indexOf(`${selected}_`) == -1) {
-                                    set.u = NFT.place(selected, b.for, set.u)
-                                    inserted = true
-                                } else {
-                                    select = (select + 1) % total
-                                    selected = Base64.fromNumber(min + select)
-                                }
-                            }
+                const max = Base64.toNumber(set.m)
+                const len = set.m.split('').length
+                const min = Base64.toNumber(set.o)
+                const total = max - min
+                var select = seed % total
+                var selected = Base64.fromNumber(min + select)
+                var inserted = false
+                if(set.u){
+                    while (!inserted) {
+                        while (selected.split('').length < len) {selected = '0' + selected}
+                        if (set.u.indexOf(`${selected}_`) == -1) {
+                            set.u = NFT.place(selected, b.for, set.u)
+                            inserted = true
                         } else {
-                            while (selected.split('').length < len) {selected = '0' + selected}
-                            set.u = `${selected}_${b.for},`
+                            select = (select + 1) % total
+                            selected = Base64.fromNumber(min + select)
+                        }
+                    }
+                } else {
+                    while (selected.split('').length < len) {selected = '0' + selected}
+                    set.u = `${selected}_${b.for},`
+                }
+                switch (set.t) {
+                    case 4:
+                        nft = {
+                            s: `${Base64.fromNumber(num -1 )},,`
                         }
                     break;
                     default:
+                        nft = {
+                            s: `${Base64.fromNumber(num -1 )},`
+                        }
                 }
                 set.i = Base64.fromNumber(Base64.toNumber(set.i) + 1)
-                let nft = {
-                    s: `${Base64.fromNumber(num -1 )},`
-                }
                 let ops = []
                 ops.push({type:'put', path:['nfts', b.for, `${b.set}:${selected}`], data: nft})
                 ops.push({type:'put', path:['sets', b.set], data: set})
@@ -142,27 +145,27 @@ const NFT = {
                     else ops.push({ type: 'put', path: ['sets', `Qm${b.item.split(':')[1]}`], data: set })
                     ops.push({ type: 'del', path: ['chrono', delkey] })
                     ops.push({ type: 'del', path: ['ah', b.item] })
-                    if(promises.length)Promise.all(promises).then(empty=>{store.batch(ops, [resolve, reject])})
-                    else store.batch(ops, [resolve, reject])
+                    if(promises.length)Promise.all(promises).then(empty=>{store.batch(ops, [resolve, reject,'waiting'])})
+                    else store.batch(ops, [resolve, reject,'not waiting'])
                 })
                 .catch(e => { console.log(e) })
         })
     },
-    AHHEOp : function (promies, delkey, num, b) {
+    AHHEOp : function (promies, delkey, num, b, ts) {
         return new Promise((resolve, reject) => { //NEEDS no bids
             Promise.all(promies)
                 .then(mem => {
                     let listing = mem[0],
                         set = mem[1],
                         ops = [],
-                        promises = []
+                        promises = [],
                     // const fee = parseInt(listing.b /100); add('n', fee); listingb = listing.b - fee;
-                    nft = listing.nft
+                        nft = listing.nft
                     const last_modified = nft.s.split(',')[0]
                     nft.s.replace(last_modified, Base64.fromNumber(num)) //update last modified
                     if(listing.b){ //winner
-                        let royalties = parseInt((listing.b * set.r) / 100)
-                        let fee = parseInt((listing.b * config.hive_service_fee) / 100)
+                        let royalties = parseInt(listing.b * (set.r / 10000))
+                        let fee = parseInt(listing.b * (config.hive_service_fee / 10000))
                         let total = listing.b - royalties - fee
                         const Transfer = ['transfer',
                             {
@@ -172,15 +175,15 @@ const NFT = {
                                 memo: `${b.item} sold at auction.`
                             }]
                         if(royalties){
-                            DEX.buyDluxFromDex(royalties, listing.h, num, `${num}:roy_${delkey.split(':')[1]}`, `n:${set.n}`)
+                            DEX.buyDluxFromDex(royalties, listing.h, num, `roy_${delkey.split(':')[1]}`, `n:${set.n}`, ts, 'royalty')
                             .then(empty=>{
-                                DEX.buyDluxFromDex(fee, listing.h, num, `${num}:fee_${delkey.split(':')[1]}`, `rn`)
+                                DEX.buyDluxFromDex(fee, listing.h, num, `fee_${delkey.split(':')[1]}`, `rn`, ts, 'fee')
                                 .then(emp=>{
                                     finish()
                                 })
                             })
                         } else {
-                            DEX.buyDluxFromDex(fee, listing.h, num, `${num}:fee_${delkey.split(':')[1]}`, `rn`)
+                            DEX.buyDluxFromDex(fee, listing.h, num, `fee_${delkey.split(':')[1]}`, `rn`, ts)
                             .then(emp=>{
                                 finish()
                             })
@@ -191,12 +194,13 @@ const NFT = {
                             ops.push({ type: 'put', path: ['nfts', listing.f, b.item], data: nft }) //update nft
                             const msg = `Auction of ${listing.o}'s ${b.item} has ended for ${parseFloat(listing.b / 1000).toFixed(3)} ${listing.h} to ${listing.f}`
                             ops.push({ type: 'put', path: ['feed', `${num}:vop_${delkey.split(':')[1]}`], data: msg })
+                            ops.push({ type: 'put', path: ['msa', `${num}:vop_${delkey.split(':')[1]}`], data: stringify(Transfer) })
                             if(config.hookurl)postToDiscord(msg, `${num}:vop_${delkey.split(':')[1]}`)
                             if (b.item.split(':')[0] != 'Qm') ops.push({ type: 'put', path: ['sets', b.item.split(':')[0]], data: set }) //update set
                             else ops.push({ type: 'put', path: ['sets', `Qm${b.item.split(':')[1]}`], data: set })
                             ops.push({ type: 'del', path: ['chrono', delkey] })
                             ops.push({ type: 'del', path: ['ahh', b.item] })
-                            store.batch(ops, [resolve, reject])
+                            store.batch(ops, [resolve, reject,'bidders'])
                         }
                     } else { //no bidders
                         const msg = `Auction of ${listing.o}'s ${b.item} has ended with no bidders`
@@ -209,7 +213,7 @@ const NFT = {
                         else ops.push({ type: 'put', path: ['sets', `Qm${b.item.split(':')[1]}`], data: set })
                         ops.push({ type: 'del', path: ['chrono', delkey] })
                         ops.push({ type: 'del', path: ['ahh', b.item] })
-                        store.batch(ops, [resolve, reject])
+                        store.batch(ops, [resolve, reject,'no bidders'])
                     }
                 })
                 .catch(e => { console.log(e) })
@@ -250,10 +254,23 @@ const NFT = {
                 .then(mem => {
                     let contract = mem[0],
                         set = mem[1],
+                        sales = mem[2],
+                        auc = mem[3],
                         ops = [],
                         promises = []
-                    promises = divDistro(contract.b, set.u, contract.m, contract.s) //balance, owners, movers, setname(for refund)
-                    const msg = `Dividends of ${contract.s}'s ${contract.b? parseFloat(contract.b/config.precision).toFixed(config.precision) : 0} ${config.TOKEN} have been distributed to ${promises.length} accounts`
+                    if(!contract.m)contract.m = {}
+                    for(item in sales){
+                        if(item.split(':')[0] == set.n){
+                            contract.m[sales[item].o] = 0
+                        }
+                    }
+                    for(item in auc){
+                        if(item.split(':')[0] == set.n){
+                            contract.m[auc[item].o] = 0
+                        }
+                    }
+                    promises = divDistro(contract.b, set.u, contract.m, contract.s, contract.l) //balance, owners, movers, setname(for refund)
+                    const msg = `Dividends of ${contract.s}'s ${contract.b? parseFloat(contract.b/Math.pow(10,config.precision)).toFixed(config.precision) : 0} ${config.TOKEN} have been distributed to ${promises.length} accounts`
                     promises.push(chronAssign(num + contract.p, {op:"div", set:contract.s}))
                     ops.push({ type: 'put', path: ['feed', `${num}:vop_${delkey.split(':')[1]}`], data: msg })
                     if(config.hookurl)postToDiscord(msg, `${num}:vop_${delkey.split(':')[1]}`)
@@ -261,14 +278,14 @@ const NFT = {
                     ops.push({ type: 'del', path: ['div', contract.s, 'm'] })
                     if(promises.length)Promise.all(promises).then(empty=>{store.batch(ops, [resolve, reject])})
                     else store.batch(ops, [resolve, reject])
-                    function divDistro(balance, owners, movers, setname) {
+                    function divDistro(balance, owners, movers, setname, last) {
                         let accounts = owners.split(','),
                             tos = [],
                             items = [],
                             promies = [],
                             total = 0,
                             no = Object.keys(movers)
-                        no.push('ls', 'D', 'ah', 't')
+                        no.push('ls', 'D', 'ah', 't', 'hh')
                         if(accounts.length > 0)for(var i = 0; i < accounts.length; i++) {
                             const len = accounts[i].split('_').length - 1
                             const who = accounts[i].split('_')[len]
@@ -280,7 +297,9 @@ const NFT = {
                         }
                         let cada = parseInt(balance / total)
                         let truco = balance % total
-                        promies.push(addMT(['div', setname, 'b'], truco))
+                        promies.push(addMT(['div', setname, 'b'], truco - balance))
+                        promies.push(addMT(['div', setname, 'e'], cada))
+                        promies.push(addMT(['div', setname, 'l'], cada - last))
                         for(var i = 0; i < items.length; i++) {
                             promies.push(add(tos[i] , cada * items[i]))
                         }
@@ -501,3 +520,98 @@ function distro(payingAccount, recievingAccount, price, royalty_per, author, roy
 }
 
 exports.distro = distro
+
+const DEX = {
+    insert : function ( item, price, string = '', type) {
+        let price_location = string ? string.indexOf(price) : -1
+        if (price_location === -1) {
+            let prices = string.split(',')
+            if (string !== ''){
+                for (var i = 0; i < prices.length; i++) {
+                    if(type != 'buy'){
+                        if (parseFloat(prices[i].split('_')[0]) > parseFloat(price)) {
+                            prices.splice(i, 0, price + '_' + item )
+                            return prices.join(',')
+                        }
+                    } else {
+                        if (parseFloat(prices[i].split('_')[0]) < parseFloat(price)) {
+                            prices.splice(i, 0, price + '_' + item )
+                            return prices.join(',')
+                        }
+                    }
+                }
+                return string + ',' + price + '_' + item
+            } else {
+                return price + '_' + item
+            }
+        } else {
+            let insert_location = string.indexOf(',', price_location)
+            if (insert_location === -1) {
+                return string + '_' + item
+            } else {
+                return string.substring(0, insert_location) + '_' + item + string.substring(insert_location)
+            }
+        }
+    },
+    remove : function ( item, string) {
+        if (string.indexOf(item + '_') > -1) {
+            return string.replace(`${item}_`, '')
+        } else {
+            let item_location = string.indexOf('_' + item)
+            let lowerThan = string.substring(0, item_location)
+            let greaterThan = string.substring(item_location).replace(`_${item}`, '')
+            let prices = lowerThan.split(',')
+            if(prices[prices.length - 1].split('_').length >= 2){
+                return string.replace(`_${item}`, '')
+            } else {
+                prices.pop()
+                let str = prices.join(',') + greaterThan
+                if (!prices.length) return greaterThan.substr(1) || ''
+                else if (str.substr(0,1) == ',') return str.substr(1)
+                else if (str != string)return str
+                else return string
+            }
+        }
+    },
+    buyDluxFromDex : (amount, type, num, txid, to, timestamp, memo = '') =>{
+        return new Promise((resolve, reject) => {
+            require('./processing_routes/dex').transfer({
+                from: to,
+                to: config.msaccount,
+                amount: {
+                    amount,
+                    precision: 3,
+                    nai: type == 'HIVE' ? '@@000000021' : '@@000000013'
+                },
+                memo,
+                block_num: num,
+                transaction_id: txid,
+                timestamp
+            }, [resolve, reject, memo])
+        })
+    }
+}
+exports.DEX = DEX
+
+const Watchdog = {
+    current : 0,
+    timeout: 180000, // 120 seconds to init with up to 288 blocks
+    monitor : function(){
+        if(!this.current)console.log('Watchdog: Monitoring...')
+        setTimeout(() => {
+            if(this.current == TXID.blocknumber){
+                console.log('Watchdog: TIMEOUT')
+                require('process').exit(3)
+            } else if(!this.current){
+                this.timeout = 30000
+                this.current = TXID.blocknumber
+                this.monitor()
+            } else {
+                this.current = TXID.blocknumber
+                this.monitor()
+            }
+        }, this.timeout)
+    }
+}
+
+exports.Watchdog = Watchdog

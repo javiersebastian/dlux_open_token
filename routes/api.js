@@ -11,6 +11,7 @@ const {
     getNewPosts,
     getAuthorPosts 
 } = require('./../edb');
+const { precision } = require('./../config');
 //const { reject } = require('async');
 
 var RAM = {
@@ -391,9 +392,8 @@ exports.dex = (req, res, next) => {
     var Pdex = getPathObj(['dex'])
     var Pstats = getPathObj(['stats'])
     var Pico = getPathObj(['balances', 'ri'])
-    var PQueue = getPathObj(['queue'])
     res.setHeader('Content-Type', 'application/json');
-    Promise.all([Pdex, Pstats, Pico, PQueue])
+    Promise.all([Pdex, Pstats, Pico])
         .then(function(v) {
             var markets = v[0]
             markets.hive.sells = []
@@ -551,7 +551,6 @@ exports.dex = (req, res, next) => {
             res.send(JSON.stringify({
                 markets,
                 stats: v[1],
-                queue: v[3],
                 node: config.username,
                 behind: RAM.behind,
                 VERSION
@@ -601,18 +600,9 @@ exports.detail = (req, res, next) => {
     Promise.all([stats, hiveStats])
         .then(function(v) {
             console.log(RAM.hiveDyn)
-            const DLUX = {
-                name: 'Decentralized Limitless User eXperiences',
-                symbol: 'DLUX',
-                icon: 'https://www.dlux.io/img/dlux-hive-logo-alpha.svg',
-                supply:'5% Fixed Inflation, No Cap.',
-                incirc: parseFloat(v[0].tokenSupply / 1000).toFixed(3),
-                wp:`https://docs.google.com/document/d/1_jHIJsX0BRa5ujX0s-CQg3UoQC2CBW4wooP2lSSh3n0/edit?usp=sharing`,
-                ws:`https://www.dlux.io`,
-                be:`https://hiveblockexplorer.com/`,
-                text: `DLUX is a Web3.0 technology that is focused on providing distribution of eXtended (Virtual and Augmented) Reality. It supports any browser based applications that can be statically delivered through IPFS. The DLUX Token Architecture is Proof of Stake as a layer 2 technology on the HIVE blockchain to take advantage of free transactions. With the first WYSIWYG VR Builder of any blockchain environment and the first Decentralized Exchange on the Hive Blockchain, DLUX is committed to breaking any boundaries for adoption of world changing technologies.`
-            },
-                HIVE ={
+            var TOKEN = config.detail
+                TOKEN.incirc = parseFloat(v[0].tokenSupply / 1000).toFixed(3)
+            const HIVE ={
                 name: 'HIVE',
                 symbol: 'HIVE',
                 icon: 'https://www.dlux.io/img/hextacular.svg',
@@ -636,7 +626,7 @@ exports.detail = (req, res, next) => {
             }
 
             res.send(JSON.stringify({
-                coins: [DLUX,HIVE,HBD],
+                coins: [TOKEN,HIVE,HBD],
                 node: config.username,
                 behind: RAM.behind,
                 VERSION
@@ -691,9 +681,18 @@ exports.mirrors = (req, res, next) => {
 exports.runners = (req, res, next) => {
     res.setHeader('Content-Type', 'application/json')
     store.get(['runners'], function(err, obj) {
-        var runners = obj
+        var runners = obj, result = []
+        for (var a in runners) {
+            var node = runners[a]
+            node.account = a
+            result.push(node)
+        }
         res.send(JSON.stringify({
+            result,
             runners,
+            latest: [
+                {api: "https://spkinstant.hivehoneycomb.com"}
+            ],
             node: config.username,
             behind: RAM.behind,
             VERSION
@@ -774,6 +773,8 @@ exports.protocol = (req, res, next) => {
             node: config.username,
             multisig: config.msaccount,
             jsontoken: config.jsonTokenName,
+            memoKey: config.msPubMemo,
+            features: config.featuresModel,
             behind: RAM.behind,
             info: '/markets will return node information and published APIs for the consensus nodes, you may check these other APIs to ensure that the information in the API is in consensus.\nThe prefix is used to address this tokens architecture built on Hive.',
             VERSION
@@ -805,6 +806,7 @@ exports.nfts = (req, res, next) => {
             const set = item.split(':')[0]
             result.push({
                 uid: item.split(':')[1],
+                info: mem[0][item].s,
                 set,
                 script: mem[1][set].s,
                 type: mem[1][set].t,
@@ -839,8 +841,9 @@ exports.nfts = (req, res, next) => {
 }
 
 exports.sets = (req, res, next) => {
-    let sets = getPathObj(['sets'])
-    Promise.all([sets])
+    let sets = getPathObj(['sets']),
+        divs = getPathObj(['div'])
+    Promise.all([sets, divs])
     .then(mem => {
         let result = []
         for (set in mem[0]){
@@ -865,9 +868,22 @@ exports.sets = (req, res, next) => {
                 royalty: mem[0][set].r,
                 royalty_allocation: mem[0][set].ra || `${mem[0][set].a}_10000`,
                 name: mem[0][set].n,
-                long_name: mem[0][set].nl,
+                name_long: mem[0][set].nl,
                 minted: mem[0][set].i,
-                max: Base64.toNumber(mem[0][set].j)
+                max: Base64.toNumber(mem[0][set].j),
+                max_exe_length: mem[0][set].x || 0,
+                max_opt_length: mem[0][set].y || 0,
+                total_div: {
+                    amount: mem[1][set]?.e || 0,
+                    precision: config.precision,
+                    token: config.TOKEN
+                },
+                last_div: {
+                    amount:mem[1][set]?.l || 0,
+                    precision: config.precision,
+                    token: config.TOKEN
+                },
+                period_div: mem[1][set]?.p
             })
         }
         res.setHeader('Content-Type', 'application/json')
@@ -884,8 +900,9 @@ exports.sets = (req, res, next) => {
 exports.auctions = (req, res, next) => {
     let from = req.params.set,
         ahp = getPathObj(['ah']),
-        setp = getPathObj(['sets'])
-    Promise.all([ahp, setp])
+        setp = getPathObj(['sets']),
+        ahhp = getPathObj(['ahh'])
+    Promise.all([ahp, setp, ahhp])
     .then(mem => {
         let result = []
         for(item in mem[0]){
@@ -913,8 +930,40 @@ exports.auctions = (req, res, next) => {
                             bids: mem[0][item].c || 0,
                             bidder: mem[0][item].f || '',
                             script: mem[1][item.split(':')[0]].s,
+                            name_long: mem[1][item.split(':')[0]].nl,
                             days: mem[0][item].t,
                             buy: mem[0][item].n || ''
+                        })
+            }
+        }
+        for(item in mem[2]){
+            if(!from || item.split(':')[0] == from){
+                let auctionTimer = {},
+                now = new Date()
+                auctionTimer.expiryIn = now.setSeconds(now.getSeconds() + ((mem[2][item].e - TXID.getBlockNum())*3));
+                auctionTimer.expiryUTC = new Date(auctionTimer.expiryIn);
+                auctionTimer.expiryString = auctionTimer.expiryUTC.toISOString();
+                result.push({
+                            uid: item.split(':')[1],
+                            set: item.split(':')[0],
+                            price: {
+                                amount: mem[2][item].b || mem[2][item].p,
+                                precision: 3,
+                                token: mem[2][item].h
+                            }, //starting price
+                            initial_price: {
+                                amount: mem[2][item].p,
+                                precision: 3,
+                                token: mem[2][item].h
+                            },
+                            time: auctionTimer.expiryString,
+                            by:mem[2][item].o,
+                            bids: mem[2][item].c || 0,
+                            bidder: mem[2][item].f || '',
+                            script: mem[1][item.split(':')[0]].s,
+                            name_long: mem[1][item.split(':')[0]].nl,
+                            days: mem[2][item].t,
+                            buy: mem[2][item].n || ''
                         })
             }
         }
@@ -983,6 +1032,12 @@ exports.limbo = (req, res, next) => {
                     from: str[0],
                     to: str[1],
                     price: parseInt(str[2]),
+                    type: str[3],
+                    nai:{
+                        amount: parseInt(str[2]),
+                        precision: (str[3] == "HIVE" || str[3] == "HBD") ? 3 : config.precision,
+                        token: str[3] == 'TOKEN' ? config.TOKEN : str[3]
+                    },
                     item,
                     kind,
                     set:item.split(':')[0],
@@ -1035,6 +1090,7 @@ exports.mint_auctions = (req, res, next) => {
                             bids: mem[0][item].c || 0,
                             bidder: mem[0][item].f || '',
                             script: mem[1][item.split(':')[0]].s,
+                            name_long: mem[1][item.split(':')[0]].nl,
                             days: mem[0][item].t,
                             buy: mem[0][item].n || ''
                         })
@@ -1068,6 +1124,7 @@ exports.mint_supply = (req, res, next) => {
                     sets[item.split(':')[0]] = {
                         set: item.split(':')[0],
                         script: mem[1][item.split(':')[0]].s,
+                        name_long: mem[1][item.split(':')[0]].nl,
                         auctions: [],
                         sales: [],
                         qty_sales: 0,
@@ -1101,6 +1158,7 @@ exports.mint_supply = (req, res, next) => {
                             bids: mem[0][item].c || 0,
                             bidder: mem[0][item].f || '',
                             script: mem[1][item.split(':')[0]].s,
+                            name_long: mem[1][item.split(':')[0]].nl,
                             days: mem[0][item].t,
                             buy: mem[0][item].n || ''
                         })
@@ -1130,7 +1188,8 @@ exports.mint_supply = (req, res, next) => {
                         token: config.TOKEN
                     },
                     by:mem[2][item].o,
-                    script: mem[1][item.split(':')[0]].s
+                    script: mem[1][item.split(':')[0]].s,
+                    name_long: mem[1][item.split(':')[0]].nl
                 }
                 sets[item.split(':')[0]].qty += (mem[2][item].a || 1)
                 sets[item.split(':')[0]].qty_sales += (mem[2][item].a || 1)
@@ -1143,6 +1202,7 @@ exports.mint_supply = (req, res, next) => {
                     sets[item.split(':')[0]] = {
                         set: item.split(':')[0],
                         script: mem[1][item.split(':')[0]].s,
+                        name_long: mem[1][item.split(':')[0]].nl,
                         auctions: [],
                         sales: [],
                         qty_sales: 0,
@@ -1166,6 +1226,7 @@ exports.mint_supply = (req, res, next) => {
                     },
                     by:hivesells[item].o,
                     script: mem[1][item.split(':')[0]].s,
+                    name_long: mem[1][item.split(':')[0]].nl,
                     max,
                     pb
                 }
@@ -1203,11 +1264,12 @@ exports.sales = (req, res, next) => {
                     set: item.split(':')[0],
                     price: {
                         amount: mem[0][item].p,
-                        precision: config.precision,
-                        token: config.TOKEN
+                        precision: mem[0][item].h ? 3 : config.precision,
+                        token: mem[0][item].h ? mem[0][item].h :config.TOKEN
                     },
                     by:mem[0][item].o,
-                    script: mem[2][item.split(':')[0]].s
+                    script: mem[2][item.split(':')[0]].s,
+                    name_long: mem[2][item.split(':')[0]].nl
                 }
                 result.push(listing)
             }
@@ -1243,7 +1305,8 @@ exports.mint_sales = (req, res, next) => {
                         token: config.TOKEN
                     },
                     by:mem[0][item].o,
-                    script: mem[1][item.split(':')[0]].s
+                    script: mem[1][item.split(':')[0]].s,
+                    name_long: mem[1][item.split(':')[0]].nl
                 }
                 result.push(listing)
             }
@@ -1261,8 +1324,9 @@ exports.mint_sales = (req, res, next) => {
 
 exports.set = (req, res, next) => {
     let setname = req.params.set,
-        setp = getPathObj(['sets', setname])
-    Promise.all([setp])
+        setp = getPathObj(['sets', setname]),
+        divs = getPathObj(['divs'])
+    Promise.all([setp, divs])
     .then(mem => {
         res.setHeader('Content-Type', 'application/json')
         var result = [], set = {
@@ -1288,7 +1352,20 @@ exports.set = (req, res, next) => {
                 name: mem[0].n,
                 name_long: mem[0].nl,
                 minted: Base64.toNumber(mem[0].i),
-                max: Base64.toNumber(mem[0].j)
+                max: Base64.toNumber(mem[0].j),
+                max_opt_length: mem[0].y || 0,
+                max_exe_length: mem[0].x || 0,
+                total_div: {
+                    amount: mem[1][set]?.e || 0,
+                    precision: config.precision,
+                    token: config.TOKEN
+                },
+                last_div: {
+                    amount:mem[1][set]?.l || 0,
+                    precision: config.precision,
+                    token: config.TOKEN
+                },
+                period_div: mem[1][set]?.p
             },
             uids = []
             if (mem[0].u)uids = mem[0].u.split(',')
@@ -1336,7 +1413,8 @@ exports.item = (req, res, next) => {
                         uid: itemname,
                         set: setname,
                         last_modified: Base64.toNumber(obj.s.split(',')[0]),
-                        string: obj.s || '',
+                        info: obj.s || '',
+                        type: mem[0].t,
                         owner,
                         lien: obj.l || 'No Lien',
                     },
@@ -1356,6 +1434,7 @@ exports.item = (req, res, next) => {
                         permlink: mem[0].p,
                         author: mem[0].a,
                         script: mem[0].s,
+                        name_long: mem[0].nl,
                         encoding: mem[0].e,
                         type: mem[0].t,
                         royalty: mem[0].r,
@@ -1530,6 +1609,11 @@ exports.coincheck = (state) => {
             supply += state.balances[bal]
             lbal += state.balances[bal]
         }
+        cbal = 0
+        for (bal in state.cbalances) {
+            supply += state.cbalances[bal]
+            cbal += state.cbalances[bal]
+        }
         var gov = 0,
             govt = 0
         var con = 0
@@ -1587,6 +1671,18 @@ exports.coincheck = (state) => {
         let check = `supply check:state:${state.stats.tokenSupply} vs check: ${supply}: ${state.stats.tokenSupply - supply}`
         if (state.stats.tokenSupply != supply) {
             info = { lbal, gov, govt, pow, powt, con, ah, am, bond, div }
+        } else {
+            info = {
+                liquid_supply: lbal - state.balances.rc - state.balances.ra - state.balances.rm - state.balances.rn - state.balances.ri,
+                locked_gov: govt,
+                locked_pow: powt,
+                in_contracts: con,
+                in_auctions: ah,
+                in_market: am,
+                in_NFTS: bond,
+                in_dividends: div,
+                in_claims: cbal
+            }
         }
         return {check, info, supply}
 }
@@ -1609,6 +1705,8 @@ exports.coin = (req, res, next) => {
 exports.user = (req, res, next) => {
     let un = req.params.un,
         bal = getPathNum(['balances', un]),
+        cbal = getPathNum(['cbalances', un]),
+        claims = getPathObj(['claims', un]),
         pb = getPathNum(['pow', un]),
         lp = getPathNum(['granted', un, 't']),
         lg = getPathNum(['granting', un, 't']),
@@ -1618,12 +1716,24 @@ exports.user = (req, res, next) => {
         pup = getPathObj(['up', un]),
         pdown = getPathObj(['down', un])
     res.setHeader('Content-Type', 'application/json');
-    Promise.all([bal, pb, lp, contracts, incol, gp, pup, pdown, lg])
+    Promise.all([bal, pb, lp, contracts, incol, gp, pup, pdown, lg, cbal, claims])
         .then(function(v) {
             var arr = []
-            for (var i in v[3]) {arr.push(v[3][i])}
+            for (var i in v[3]) {
+                var c = v[3][i]
+                if(c.partial){
+                    c.partials = []
+                    for(var p in c.partial){
+                        var j = c.partial[p]
+                        j.txid = p
+                        c.partials.push(j)
+                    }
+                }
+                arr.push(c)
+            }
             res.send(JSON.stringify({
                 balance: v[0],
+                claim: v[9],
                 poweredUp: v[1],
                 granted: v[2],
                 granting: v[8],
@@ -1735,6 +1845,9 @@ exports.hive_api = (req, res, next) => {
             break;
         case 'get_content_replies':
             params = [params.author, params.permlink];
+            break;
+        case 'get_dynamic_global_properties':
+            params = []
             break;
         default:
     }

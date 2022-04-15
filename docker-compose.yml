@@ -1,0 +1,41 @@
+version: '3'
+services:
+  ipfs:
+    # docker run -d --name ipfs_host -v $ipfs_staging:/export -v $ipfs_data:/data/ipfs -p 4001:4001 -p 127.0.0.1:8080:8080 -p 127.0.0.1:5001:5001 ipfs/go-ipfs:latest
+    image: ipfs/go-ipfs:latest
+    restart: unless-stopped
+    ports:
+      - 4001:4001
+      - 8080:8080
+      - 5001:5001
+    volumes:
+      # - type: bind
+      #   source: ./staging_dir
+      #   target: /export
+      # - type: bind
+      #   source: ./data_dir
+      #   target: /data/ipfs
+      - ./staging_dir:/export
+      # - ./data_dir:/data/ipfs
+      - ipfs:/data/ipfs
+  dlux:
+    # depends_on:
+    #   - ipfs
+    build: .
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      - ipfshost=ipfs
+      - ipfsprotocol=http
+      - ipfsport=5001
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # stdin_open: true
+    # tty: true
+volumes:
+  ipfs:
+  # node-2:
+  # node-3:
